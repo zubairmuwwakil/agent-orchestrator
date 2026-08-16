@@ -1,0 +1,25 @@
+# M1 defaults. Routing data remains configuration so it can be calibrated without code changes.
+
+[adapters.claude]
+command = "claude"
+rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit"]
+
+[pools.claude_pro]
+window = "weekly"
+budget_units = 20
+flat_run_estimate = 1
+
+[lanes.standard]
+# `claude --help` / a live probe on 2026-08-15 confirmed the current CLI accepts
+# the `sonnet` alias; the spec's illustrative `sonnet-5` name is rejected by it.
+candidates = ["claude:sonnet@high"]
+
+[ladder]
+effort_order = ["low", "medium", "high", "xhigh", "max"]
+retry_count = 2
+
+[verify]
+timeout_s = 120
+tests = []
+lint = []
+build = []
