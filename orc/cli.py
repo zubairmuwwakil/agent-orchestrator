@@ -1,7 +1,8 @@
-"""Typer entrypoint for Milestone 1's single-lane coding flow."""
+"""Typer entrypoint for Milestone 1's single-lane coding flow, plus `orc quota`."""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -11,10 +12,12 @@ from rich.console import Console
 from orc.adapters.claude_code import ClaudeCodeAdapter
 from orc.config import ConfigError, find_config, load_config
 from orc.gitops import SafetyError
-from orc.report import format_run
+from orc.ledger import Ledger
+from orc.report import format_quota, format_run
 from orc.router import run_task
 
 app = typer.Typer(add_completion=False, invoke_without_command=True, no_args_is_help=True)
+quota_app = typer.Typer(add_completion=False)
 console = Console()
 
 
@@ -51,6 +54,24 @@ def run(
         raise typer.Exit(code=1)
 
 
+@quota_app.command()
+def quota(
+    target: Annotated[Path, typer.Option(help="Git repository whose ledger to read.")] = Path("."),
+) -> None:
+    """Print the advisory quota ledger: pool, window, est. remaining, exhausted-until."""
+    resolved_target = target.resolve()
+    try:
+        config = load_config(find_config(resolved_target))
+    except ConfigError as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    ledger = Ledger(resolved_target / ".orc" / "ledger.json")
+    console.print(format_quota(ledger.status(config.pools)))
+
+
 def main() -> None:
-    """Console-script entrypoint."""
-    app()
+    """Console-script entrypoint; routes `quota` before `app`'s TASK argument can claim it."""
+    if sys.argv[1:2] == ["quota"]:
+        quota_app(args=sys.argv[2:])
+    else:
+        app()

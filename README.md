@@ -8,8 +8,10 @@ the result, and retry with higher effort plus exact verification feedback.
 uv sync
 cd examples/sample-python
 ../../.venv/bin/orc "make the tests pass"
+../../.venv/bin/orc quota
 ```
 
 Run artifacts and the advisory ledger are persisted under the target repository's
 `.orc/` directory. Configuration is discovered from `orc.toml` in the target or
-one of its parent directories.
+one of its parent directories. `orc quota` prints each configured pool's
+self-estimated remaining budget from that ledger; the numbers are advisory only.

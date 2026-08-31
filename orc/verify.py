@@ -100,7 +100,19 @@ def _fenced_commands_under_testing_heading(contents: str) -> list[str]:
     next_heading = re.search(r"(?m)^#{1,6}\s+", remainder)
     section = remainder[: next_heading.start()] if next_heading else remainder
     blocks = re.findall(r"(?ms)^```[^\n]*\n(.*?)^```", section)
-    return [line.strip() for block in blocks for line in block.splitlines() if line.strip()]
+    lines = (line.strip() for block in blocks for line in block.splitlines())
+    return [command for command in (_strip_inline_comment(line) for line in lines) if command]
+
+
+def _strip_inline_comment(line: str) -> str:
+    """Drop a trailing `# ...` shell-style comment, e.g. from a documented command list."""
+    if not line:
+        return line
+    try:
+        tokens = shlex.split(line, comments=True)
+    except ValueError:
+        return line
+    return shlex.join(tokens)
 
 
 def _classify(commands: list[str]) -> VerificationPlan:
