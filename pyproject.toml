@@ -5,7 +5,7 @@ description = "Quota-aware multi-model coding orchestrator"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "pydantic>=2.10,<3",
+  "pydantic>=2.13.5,<3",
   "rich>=13.9,<14",
   "typer>=0.15,<1",
 ]
