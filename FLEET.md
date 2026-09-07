@@ -14,10 +14,14 @@ or gitignored local configuration, never here.
 |---|---|---|
 | `claude_pro` | Sonnet 5, Opus 5, Opus 4.8/4.7/4.6, Haiku 4.5 — low, medium, high, xhigh; max/ultracode when available | Quality lane; Opus 5 is the strongest included consultant |
 | `codex_plus` | GPT-5.6 Sol, Terra, Luna — light, medium, high, xhigh; ultra on Sol and Terra | Luna for volume, Terra for standard work, Sol for escalation |
-| `antigravity_gemini` | Gemini 3.7 Flash, Gemini 3.1 Pro — low, medium, high | Flash is the default low-cost agent lane |
+| `antigravity_gemini` | Gemini Flash and Pro via the `agy` CLI — effort low, medium, high | Flash is the default low-cost agent lane, and the `volume` quota fallback |
 | `antigravity_claude` | Claude Sonnet 4.6, Opus 4.6, GPT-OSS 120B | Reserve for browser-verified flows; exclude from the default ladder |
 | `copilot` | Base models; Haiku, Sonnet, Opus, GPT-5.6 family | Default agent and budget reviewer lanes; do not use Copilot's built-in code-review mode |
 | `fable_paid` | Fable 5 | Confirmation-gated consultant of last resort |
+
+Model slugs for `antigravity_gemini` are provisional until confirmed against the installed
+`agy` CLI; the vendor documents slugs such as `gemini-3.8-flash-high` alongside a separate
+`--effort` flag, and which of the two carries the reasoning tier is not yet verified.
 
 ## Routing rules
 

@@ -26,6 +26,9 @@ orc "fix the flaky auth test"
 2. **The routing unit is `(model, effort)`, not model.** An effort bump on the same model is always the first escalation step.
 3. **Failure triage — the "lazy vs dumb" rule.** If the agent *skipped work* (never ran tests, few tool calls, bailed early, claimed success without evidence) → retry **same model, higher effort**. If it *genuinely iterated* (ran tests ≥2×, edited files) and still failed → **escalate to the next rung**.
 4. **The quota ledger is MVP core, not a v2 feature.** All four subscriptions are entry-tier; quota is the binding constraint.
+   *Amended 2026-09-07:* the original rationale assumed no product exposes usage. Claude Code,
+   Codex, and Antigravity all report real utilization (§7). The ledger reads telemetry first and
+   estimates only as a fallback.
 5. **Adapters are subprocess wrappers around official CLIs** (`claude`, `codex`, Antigravity CLI, Copilot CLI). No MCP-as-transport, no vendor SDK lock-in, in v1.
 6. **Expensive models are consultants, not agents.** Opus 5 (xhigh+), Sol (xhigh/ultra), and Fable 5 are invoked in single-shot "consult" mode with a prepared context package — never in open-ended tool loops. Cheap/mid models do the looping.
 7. **Cross-vendor review with fresh context.** Reviewer vendor ≠ author vendor. Reviewer sees task + diff + verification results — never the author's transcript. Findings are P0–P3; fix P0/P1, report P2/P3.
@@ -74,7 +77,7 @@ orc/
     base.py         # AgentAdapter ABC + AgentRequest/AgentResult
     claude_code.py  # M1
     codex.py        # M2
-    antigravity.py  # M4
+    antigravity.py  # M2 (agy)
     copilot.py      # M4
   verify.py         # project detection + test/lint/build harness
   review.py         # cross-vendor review + adjudication (M3)
@@ -89,7 +92,7 @@ orc.toml            # pools, lanes, ladder, estimates, verify commands
 
 **Stack (fixed):** Python ≥3.12, `uv`, `typer`, `pydantic`, `rich`. Tests `pytest`, lint `ruff`, types `mypy` (permissive to start). No other runtime dependencies without asking.
 
-**Trade-offs accepted:** subprocess adapters are slower and lossier than SDKs but vendor-neutral and swappable; self-estimated quota is imprecise but the only option (no product exposes a usage API); Python over Go/TS for one-developer iteration speed.
+**Trade-offs accepted:** subprocess adapters are slower and lossier than SDKs but vendor-neutral and swappable; quota is read from vendor telemetry where available and self-estimated otherwise (§7); Python over Go/TS for one-developer iteration speed.
 
 ---
 
@@ -101,6 +104,9 @@ class AgentAdapter(ABC):
 
     def available(self) -> bool: ...  # CLI on PATH + authenticated
     def run(self, req: AgentRequest) -> AgentResult: ...
+
+    def quota_probe(self) -> QuotaObservation | None:
+        return None  # no telemetry available; the ledger falls back to estimates
 
 
 @dataclass
@@ -122,15 +128,37 @@ class AgentResult:
     transcript_path: Path
     tool_call_count: int | None  # for triage heuristics, if derivable
     ran_commands: list[str]  # for triage heuristics, if derivable
+    quota: QuotaObservation | None  # utilization observed during this run
+
+
+@dataclass
+class QuotaWindow:
+    kind: Literal["5h", "weekly", "monthly"]
+    used_fraction: float
+    resets_at: datetime
+
+
+@dataclass
+class QuotaObservation:
+    windows: list[QuotaWindow]  # a pool may have several simultaneous windows
+    observed_at: datetime
+    source: Literal["stream", "session-file", "command"]
 ```
 
 Rules for every adapter:
 
-- **Discovery first.** The first implementation task per adapter is to run `<cli> --help` and read current official docs. Do not trust flag names from this spec — they drift. Known starting points only: `claude -p/--print` with JSON output, `--model`, `--effort`; `codex exec` for non-interactive runs; the Antigravity Go CLI (replaced Gemini CLI, June 2026 — capabilities unknown, treat as a spike); Copilot CLI (capabilities unknown, treat as a spike).
+- **Discovery first.** The first implementation task per adapter is to run `<cli> --help` and read current official docs. Do not trust flag names from this spec — they drift. Known starting points only: `claude -p/--print` with JSON output, `--model`, `--effort`; `codex exec` for non-interactive runs; `agy -p/--print` with `--model`, `--effort` and `--output-format` (headless confirmed 2026-09-07, flags still to be re-verified against `agy --help`); Copilot CLI (capabilities unknown, treat as a spike).
 - Detect rate-limit/quota errors from exit codes + stderr patterns and return `rate_limited` so the ledger can mark the pool exhausted. Collect the real error strings during the discovery spike; keep the patterns in config.
 - `consult` mode: one completion, no agentic tool loop. If a CLI cannot disable tools, constrain via prompt + lowest-permission flags, and cap `timeout_s` low.
 - Missing/unauthenticated CLI → `available() == False`; router skips the lane and warns once per run. Never crash because a vendor is absent.
-- Diffs come from `gitops` (git itself), never parsed from agent output.
+- Diffs come from `gitops` (git itself), never parsed from agent output. Diff against the
+  base commit recorded at branch creation, so committed and staged work is not missed.
+- Each adapter owns its own quota mechanism and normalizes it to `QuotaObservation`.
+  `ledger.py` stays vendor-agnostic. Missing telemetry is not an error.
+- Adapters set `stdin=DEVNULL`; agent timeouts come from `[agents]`, never from `[verify]`.
+- Adapter tests validate **both** halves of the subprocess boundary: parsing, against real
+  recorded output in `tests/fixtures/`; and argv, via opt-in `live` tests that run the real
+  CLI. Asserting argv against a hand-written expectation is not sufficient.
 
 ---
 
@@ -153,12 +181,19 @@ candidates = ["claude:opus-5@xhigh", "codex:sol@ultra", "fable_paid:fable-5@high
 
 [ladder]
 order = ["standard", "quality"]     # M1–M2 default path
+fallback = "volume"                 # reached only when every rung is reserve-blocked
 attempts_per_rung = 2
 max_total_attempts = 4
 ```
 
-- Default start rung: `standard`. Overrides: `--lane volume|standard|quality`, `--agent vendor:model`, `--effort <level>`, `--no-review`.
-- Within a lane, pick the first candidate whose pool is not exhausted (ledger) and whose adapter is available.
+- Default start rung: `standard`. Overrides: `--lane volume|standard|quality`, `--agent vendor:model`, `--effort <level>`, `--no-review`, `--use-reserve`.
+- Within a lane, pick the first candidate whose pool is eligible (ledger) and whose adapter is available.
+  Quota decides **eligibility only, never preference** — candidate order stays as configured, so ladder
+  logs remain clean routing data for v2.
+- `volume` is a fallback beside the ladder, not a rung below it. It is reached only when every
+  candidate in every rung is blocked by the reserve line, turning exhaustion into a degraded route
+  instead of a failed run. A cheap first rung would consume the fixed `max_total_attempts` budget and
+  starve `quality`.
 - **Triage after each failed verification (heuristics, no ML):**
   - *Lazy signals* → same model, effort +1: verify command never appeared in `ran_commands`; `tool_call_count` below a config floor; success claimed while verification fails.
   - *Dumb signals* → next rung: verification ran ≥2 times, files were edited, still failing.
@@ -169,13 +204,33 @@ max_total_attempts = 4
 
 ## 7. Quota ledger
 
-Reality: none of the four products exposes a clean usage API. The ledger is **self-estimated and advisory**, corrected by observed rate-limit errors.
+*Revised 2026-09-07.* Three of the vendors report real utilization; the ledger reads it and falls
+back to estimates only where it is absent.
 
-- State in `.orc/ledger.json`: per pool → `{window: "5h"|"weekly"|"monthly", window_started, budget_units, spent_units, exhausted_until?}`. Units are abstract "run credits" configured per pool; adapter-reported tokens refine estimates when present.
-- Decrement on every run: reported tokens if available, else a flat per-run estimate from config (per model tier, user-tunable).
-- On `rate_limited`: set `exhausted_until` = next window boundary (5h boundary / configured weekly reset day / 1st of month), reroute to the next candidate, print what happened.
-- `orc quota` prints a table (pool, window, est. remaining, exhausted-until). `orc quota set/reset <pool>` for manual correction.
-- Print "estimated" wherever numbers appear. Calibration is a week-one user activity, not code.
+**Telemetry sources** (each adapter normalizes to `QuotaObservation`, §5):
+
+| Vendor | Mechanism | Available |
+|---|---|---|
+| `claude` | `rate_limit_event` in `--output-format stream-json` | during a run |
+| `codex` | `rate_limits` in `$CODEX_HOME/sessions/.../rollout-<thread_id>.jsonl` | any time |
+| `agy` | `agy /usage`, `agy /credits` | any time |
+| `copilot` | none known | — estimate only |
+
+- A pool has **several simultaneous windows** (codex reports a 300-minute and a 10080-minute window).
+  `.orc/ledger.json` stores per pool → `{windows: [{kind, used_fraction, resets_at}], observed_at,
+  source, window_started, budget_units, spent_units, exhausted_until?}`.
+- **Eligibility:** a pool is ineligible once **any** window reaches
+  `used_fraction >= 1 - reserve_fraction`, until that window's `resets_at`.
+  `reserve_fraction` is per-pool in `orc.toml`, default `0.15`, overridden by `--use-reserve`.
+  The reserve is evaluated before a run starts and never re-asked mid-ladder, so an unattended run
+  can neither block on a prompt nor spend the owner out of their own interactive CLI.
+- **Fallback:** without telemetry, decrement abstract "run credits" per run — reported tokens if
+  available, else a flat per-run estimate from config.
+- On `rate_limited`: set `exhausted_until` to the next window boundary, reroute, print what happened.
+  Telemetry is authoritative; a rate-limit error is a correction, not the primary signal.
+- Windows reset: clear `spent_units` once `window_started` is older than the window length.
+- `orc quota` prints pool, window, utilization, reset time, and **source** (telemetry or estimated).
+  `orc quota set/reset <pool>` for manual correction. Label estimated numbers as estimated.
 
 ---
 
@@ -219,6 +274,11 @@ Order of truth for commands:
 
 - Refuse to start unless the target is a git repo; require clean or stashable state; create branch `orc/<slug>-<shortid>`; never touch the user's current branch.
 - Never: force-push, delete branches, edit `.git`, weaken/disable/delete tests to make them pass, write outside the target repo.
+  *Single carve-out (2026-09-07):* append `.orc/` to `.git/info/exclude`. That file is local-only and
+  never committed; without it `.orc/` leaves the tree dirty so a second run refuses to start, and a
+  supervised agent running `git add -A` can stage orc's own artifacts into the user's branch.
+- An agent that modifies a test file aborts the run with a safety error. Enumerate test files via
+  `git ls-files`, never a filesystem walk.
 - Destructive-pattern denylist (e.g. `rm -rf` outside repo, `DROP TABLE`, schema migrations) → block unless `--allow-destructive`.
 - Every run persists prompts, transcripts, diffs, and verification output under `.orc/runs/<id>/`.
 - `fable_paid` runs require interactive confirmation showing an estimated cost; `--yes-paid` for scripted use.
@@ -261,16 +321,27 @@ Claude Code adapter only. `orc "<task>"` → branch → agent (`claude:sonnet-5@
 - [ ] With the `claude` CLI missing, orc exits with a clear one-line error, not a stack trace.
 - [ ] Unit tests cover verify-command detection and the retry/feedback loop with a fake adapter.
 
-### M2 — second vendor, ladder, real ledger
-Codex adapter; lanes/ladder from `orc.toml`; lazy-vs-dumb triage; ledger with rate-limit detection; `orc quota`; structured failure feedback on retries; run logging in `.orc/log.jsonl`; exhaustion rescue guidance.
+### M2 — multi-vendor ladder, telemetry ledger
+*Scope revised 2026-09-07 (rationale: `docs/superpowers/specs/2026-09-07-m2-design.md`).*
+Codex **and Antigravity (`agy`)** adapters; lanes/ladder from `orc.toml`; lazy-vs-dumb triage;
+telemetry-driven ledger with reserve policy; `orc quota`; `orc log`; structured failure feedback on
+retries; run logging in `.orc/log.jsonl`; `volume` as a quota fallback.
+
+`agy` was promoted from M4 because §14's headless question resolved affirmatively and it has the
+cleanest quota probe of the three, which exercises `QuotaObservation` against real variety.
 
 **Acceptance:**
 - [ ] A mocked `rate_limited` result reroutes to the other vendor and marks the pool exhausted until reset.
 - [ ] Triage rules covered by unit tests using synthetic `AgentResult`s (lazy → effort bump; dumb → rung change).
-- [ ] `orc quota` shows both pools with estimated remaining.
+- [ ] `orc quota` shows every pool with utilization, reset time, and whether the number is observed or estimated.
+- [ ] A pool past its reserve line is skipped before a run is spent, and `--use-reserve` overrides it.
+- [ ] With every ladder rung reserve-blocked, the run degrades to the `volume` lane rather than failing.
 - [ ] Structured failure context (exact error summary + touched file diff stat) is provided on verification failure retries.
 - [ ] Exhaustion provides clear copy-pasteable terminal instructions to rescue the task branch interactively.
-- [ ] Task runs are logged as JSONL in `.orc/log.jsonl`.
+- [ ] Task runs are logged as JSONL in `.orc/log.jsonl` per §13, with `prompt_hash` and no prompt text.
+- [ ] Each adapter has parser tests against recorded real CLI output, plus an opt-in `live` test that
+      runs its actual argv against the installed CLI.
+- [ ] `orc` runs against a target repository outside its own directory tree.
 
 ### M3 — cross-vendor review + consult mode
 **Acceptance:**
@@ -279,8 +350,9 @@ Codex adapter; lanes/ladder from `orc.toml`; lazy-vs-dumb triage; ledger with ra
 - [ ] `orc --consult` returns a single-shot answer, decrements the ledger, changes no files.
 - [ ] Fable path is blocked without confirmation and prints an estimated cost when confirmed.
 
-### M4 — Antigravity + Copilot adapters, polish
-Discovery-first spikes; wire `volume` and free lanes; graceful absence everywhere.
+### M4 — Copilot adapter, polish
+Discovery-first spike for the Copilot CLI (not installed as of 2026-09-07); wire the free lane;
+graceful absence everywhere. *Antigravity moved to M2 — see §12 M2 and §14.*
 
 ### Non-goals for MVP (v2 parking lot — do not build)
 Git worktrees & parallel subtasks · consensus mode · learned routing from logs · repo indexing/embeddings · browser verification · MCP transport · TUI/web UI · Windows support (macOS/Linux only).
@@ -290,13 +362,22 @@ Git worktrees & parallel subtasks · consensus mode · learned routing from logs
 ## 13. Logging (feeds v2 learned routing)
 
 One JSON line per task in `.orc/log.jsonl`:
-`{task_id, prompt_hash, start_lane, attempts: [{vendor, model, effort, triage, verify}], reviewer, findings: {p0,p1,p2,p3}, outcome, wall_s, est_usage}` — no code contents, no prompts.
+`{task_id, prompt_hash, start_lane, attempts: [{vendor, model, effort, triage, verify, wall_s}],
+reviewer, findings: {p0,p1,p2,p3}, outcome, wall_s, est_usage, quota: [{pool, window, used_fraction,
+source}]}` — no code contents, no prompts. The full prompt is already persisted per §10 under
+`.orc/runs/<id>/prompt-N.txt`, so `orc log` reads the run directory for human display and the JSONL
+carries only the hash. Recording observed utilization per attempt is what makes the reserve default
+calibratable from real data.
 
 ---
 
 ## 14. Open questions (resolve during build; none are blocking)
 
-- **Antigravity CLI headless capabilities** — unknown. M4 spike; if it can't run non-interactively, drop the lane and note it. *(engineering)*
+- ~~**Antigravity CLI headless capabilities**~~ — **resolved 2026-09-07.** `agy` is a separate product
+  from Antigravity.app and is fully headless: `-p/--print`, `--model`, `--effort low|medium|high`,
+  `--output-format text|json|stream-json`, `--json-schema`, `--print-timeout` (default 5m), and
+  `agy /usage` for quota. Installed via the vendor script to `~/.local/bin/agy`. Flags are from docs
+  and **must be re-verified against `agy --help`** before the adapter is written. Promoted to M2.
 - **Copilot billing mode** — owner must check whether their plan is legacy premium-requests or the June-2026 credits model and set the pool budget accordingly. *(owner)*
 - **Exact rate-limit error strings per CLI** — collect during adapter discovery; keep patterns in config. *(engineering)*
 - **Weekly reset timestamps per subscription** — owner observes and sets in `orc.toml` during calibration week. *(owner)*
