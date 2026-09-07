@@ -26,6 +26,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: runs a real vendor CLI; deselected by default, enable with -m live",
+]
+addopts = "-m 'not live'"
 
 [tool.ruff]
 target-version = "py312"
