@@ -1,4 +1,4 @@
-"""Human-readable activity trail for the M1 run result."""
+"""Human-readable activity trail for the run result and quota status."""
 
 from __future__ import annotations
 
@@ -24,12 +24,20 @@ def format_run(run: TaskRun) -> str:
     lines = [f"task {run.task_id}  branch {run.branch}"]
     for attempt in run.attempts:
         result = "green" if attempt.verification.ok else "failed"
+        agent_label = attempt.candidate or "claude"
         lines.append(
-            f"→ standard: claude attempt {attempt.number} @{attempt.effort}  "
+            f"→ standard: {agent_label} attempt {attempt.number} @{attempt.effort}  "
             f"agent={attempt.result.status} verify={result}"
         )
         if attempt.verification.partial:
             lines.append("→ verify: no tests detected; lint/build only")
     lines.append(f"{'✓' if run.verified else '✗'} artifacts: {run.run_dir}")
     lines.append("\nDiff:\n" + (run.diff or "(no working-tree diff)"))
+    if not run.verified:
+        lines.append("\n" + "─" * 60)
+        lines.append("⚠ Task did not pass independent verification.")
+        lines.append(f"To inspect or resume manually on branch '{run.branch}':")
+        lines.append(f"  git switch {run.branch}")
+        lines.append("  git diff")
+        lines.append("─" * 60)
     return "\n".join(lines)

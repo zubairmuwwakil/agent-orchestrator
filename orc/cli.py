@@ -1,4 +1,4 @@
-"""Typer entrypoint for Milestone 1's single-lane coding flow, plus `orc quota`."""
+"""Typer entrypoint for Milestone 2's multi-vendor coding flow, plus `orc quota`."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from orc.adapters.base import AgentAdapter
 from orc.adapters.claude_code import ClaudeCodeAdapter
+from orc.adapters.codex import CodexAdapter
 from orc.config import ConfigError, find_config, load_config
 from orc.gitops import SafetyError
 from orc.ledger import Ledger
@@ -29,26 +31,42 @@ def run(
         bool, typer.Option(help="Allow a task matching the destructive-operation denylist.")
     ] = False,
 ) -> None:
-    """Run Claude Code on TASK in TARGET, then independently verify it."""
+    """Run coding agent ladder on TASK in TARGET, then independently verify it."""
     resolved_target = target.resolve()
     try:
         config = load_config(find_config(resolved_target))
-        claude_config = config.adapters["claude"]
     except (ConfigError, KeyError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(code=2) from error
-    adapter = ClaudeCodeAdapter(claude_config)
-    if not adapter.available():
+
+    adapters: dict[str, AgentAdapter] = {}
+    if "claude" in config.adapters:
+        adapters["claude"] = ClaudeCodeAdapter(config.adapters["claude"])
+    if "codex" in config.adapters:
+        adapters["codex"] = CodexAdapter(config.adapters["codex"])
+
+    available_adapters = {k: v for k, v in adapters.items() if v.available()}
+    if not available_adapters:
         typer.echo(
-            "error: Claude CLI is missing or not authenticated; install and sign in to `claude`.",
+            "error: No configured agent CLIs are installed and authenticated (checked: "
+            + ", ".join(adapters.keys())
+            + ").",
             err=True,
         )
         raise typer.Exit(code=1)
+
     try:
-        task_run = run_task(task, resolved_target, config, adapter, allow_destructive)
+        task_run = run_task(
+            task,
+            resolved_target,
+            config,
+            adapters=adapters,
+            allow_destructive=allow_destructive,
+        )
     except (SafetyError, ValueError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(code=2) from error
+
     console.print(format_run(task_run))
     if not task_run.verified:
         raise typer.Exit(code=1)

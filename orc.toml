@@ -1,25 +1,45 @@
-# M1 defaults. Routing data remains configuration so it can be calibrated without code changes.
+# M2 configuration. Routing data remains configuration so it can be calibrated without code changes.
 
 [adapters.claude]
 command = "claude"
+pool = "claude_pro"
 rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit"]
+
+[adapters.codex]
+command = "codex"
+pool = "codex_plus"
+rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit", "too many requests", "429"]
 
 [pools.claude_pro]
 window = "weekly"
 budget_units = 20
 flat_run_estimate = 1
 
+[pools.codex_plus]
+window = "weekly"
+budget_units = 30
+flat_run_estimate = 1
+
 [lanes.standard]
-# `claude --help` / a live probe on 2026-08-15 confirmed the current CLI accepts
-# the `sonnet` alias; the spec's illustrative `sonnet-5` name is rejected by it.
-candidates = ["claude:sonnet@high"]
+# `claude --help` confirms the CLI accepts the `sonnet` alias.
+# `codex` default model is `gpt-5.6-terra`.
+candidates = ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]
+
+[lanes.quality]
+candidates = ["claude:opus@high", "codex:gpt-5.6-sol@high"]
 
 [ladder]
+order = ["standard", "quality"]
 effort_order = ["low", "medium", "high", "xhigh", "max"]
 retry_count = 2
+max_total_attempts = 4
+
+[triage]
+min_tool_calls = 2
 
 [verify]
 timeout_s = 120
 tests = []
 lint = []
 build = []
+

@@ -262,12 +262,15 @@ Claude Code adapter only. `orc "<task>"` → branch → agent (`claude:sonnet-5@
 - [ ] Unit tests cover verify-command detection and the retry/feedback loop with a fake adapter.
 
 ### M2 — second vendor, ladder, real ledger
-Codex adapter; lanes/ladder from `orc.toml`; lazy-vs-dumb triage; ledger with rate-limit detection; `orc quota`.
+Codex adapter; lanes/ladder from `orc.toml`; lazy-vs-dumb triage; ledger with rate-limit detection; `orc quota`; structured failure feedback on retries; run logging in `.orc/log.jsonl`; exhaustion rescue guidance.
 
 **Acceptance:**
 - [ ] A mocked `rate_limited` result reroutes to the other vendor and marks the pool exhausted until reset.
 - [ ] Triage rules covered by unit tests using synthetic `AgentResult`s (lazy → effort bump; dumb → rung change).
 - [ ] `orc quota` shows both pools with estimated remaining.
+- [ ] Structured failure context (exact error summary + touched file diff stat) is provided on verification failure retries.
+- [ ] Exhaustion provides clear copy-pasteable terminal instructions to rescue the task branch interactively.
+- [ ] Task runs are logged as JSONL in `.orc/log.jsonl`.
 
 ### M3 — cross-vendor review + consult mode
 **Acceptance:**

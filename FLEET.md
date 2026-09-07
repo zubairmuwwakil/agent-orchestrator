@@ -30,4 +30,10 @@ or gitignored local configuration, never here.
    GPT-5.6 Sol at xhigh/ultra, and Fable 5 receive a prepared context package for a
    single-shot consultation.
 4. Review with fresh context from a different vendor than the author. Give the reviewer
-   the task, diff, and verification results, never the author's transcript.
+   the task, diff, and verification results, never the author's transcript. Scale review
+   to blast radius, not to diff size: always review what can destroy data, migrate a
+   schema, change a published contract, or that later work will trust without
+   re-deriving. Skip it where an automated check is the better reviewer — a mirrored doc
+   a sync check verifies, or a change following an existing pattern the repo's own check
+   already covers. An author is the worst judge of its own diff, but a check that cannot
+   be talked round beats a second opinion wherever one exists.

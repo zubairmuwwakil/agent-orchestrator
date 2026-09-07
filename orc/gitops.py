@@ -61,6 +61,12 @@ def git_diff(target: Path) -> str:
     return diff.stdout
 
 
+def git_diff_stat(target: Path) -> str:
+    """Return diff stat summary from git."""
+    stat = _git(target, "diff", "--stat")
+    return stat.stdout.strip() if stat.returncode == 0 else ""
+
+
 def test_file_snapshot(target: Path) -> dict[Path, str]:
     """Hash test files so an M1 run cannot accept a test-altering patch."""
     snapshot: dict[Path, str] = {}

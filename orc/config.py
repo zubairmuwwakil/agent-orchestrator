@@ -15,6 +15,7 @@ class ConfigError(ValueError):
 
 class AdapterConfig(BaseModel):
     command: str
+    pool: str | None = None
     rate_limit_patterns: list[str] = Field(default_factory=list)
 
 
@@ -29,8 +30,10 @@ class LaneConfig(BaseModel):
 
 
 class LadderConfig(BaseModel):
+    order: list[str] = Field(default_factory=lambda: ["standard", "quality"])
     effort_order: list[str] = Field(min_length=1)
-    retry_count: int = Field(ge=0, le=2)
+    retry_count: int = Field(default=2, ge=0, le=5)
+    max_total_attempts: int = Field(default=4, ge=1)
 
     def next_effort(self, current: str) -> str:
         """Return the next configured effort level, saturating at the maximum."""
@@ -39,6 +42,17 @@ class LadderConfig(BaseModel):
         except ValueError as error:
             raise ConfigError(f"effort {current!r} is not in ladder.effort_order") from error
         return self.effort_order[min(index + 1, len(self.effort_order) - 1)]
+
+    def is_max_effort(self, current: str) -> bool:
+        """Check if the given effort level is already at the maximum configured."""
+        try:
+            return self.effort_order.index(current) >= len(self.effort_order) - 1
+        except ValueError as error:
+            raise ConfigError(f"effort {current!r} is not in ladder.effort_order") from error
+
+
+class TriageConfig(BaseModel):
+    min_tool_calls: int = Field(default=2, ge=0)
 
 
 class VerifyConfig(BaseModel):
@@ -53,6 +67,7 @@ class OrcConfig(BaseModel):
     pools: dict[str, PoolConfig]
     lanes: dict[str, LaneConfig]
     ladder: LadderConfig
+    triage: TriageConfig = Field(default_factory=TriageConfig)
     verify: VerifyConfig = Field(default_factory=VerifyConfig)
 
 
