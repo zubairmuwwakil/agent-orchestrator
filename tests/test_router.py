@@ -29,7 +29,7 @@ def _config() -> OrcConfig:
         {
             "adapters": {"claude": {"command": "claude"}},
             "pools": {
-                "claude_pro": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
+                "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
             },
             "lanes": {"standard": {"candidates": ["claude:sonnet-5@high"]}},
             "ladder": {"effort_order": ["low", "medium", "high", "xhigh"], "retry_count": 2},
@@ -78,7 +78,7 @@ def test_retry_includes_exact_failure_feedback_and_bumps_effort(tmp_path: Path) 
     assert "Exact output follows" in fake.requests[1].prompt
     assert "assert 1 == 2" in fake.requests[1].prompt
     ledger = json.loads((tmp_path / ".orc" / "ledger.json").read_text(encoding="utf-8"))
-    assert ledger["pools"]["claude_pro"]["spent_units"] == 2
+    assert ledger["pools"]["claude"]["spent_units"] == 2
     assert (tmp_path / ".orc" / "log.jsonl").is_file()
 
 
@@ -133,12 +133,12 @@ def test_rate_limited_result_reroutes_to_other_vendor_and_marks_pool_exhausted(
     config = OrcConfig.model_validate(
         {
             "adapters": {
-                "claude": {"command": "claude", "pool": "claude_pro"},
-                "codex": {"command": "codex", "pool": "codex_plus"},
+                "claude": {"command": "claude", "pool": "claude"},
+                "codex": {"command": "codex", "pool": "codex"},
             },
             "pools": {
-                "claude_pro": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
-                "codex_plus": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
+                "claude": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
+                "codex": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
             },
             "lanes": {
                 "standard": {"candidates": ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]}
@@ -170,8 +170,8 @@ def test_rate_limited_result_reroutes_to_other_vendor_and_marks_pool_exhausted(
     assert len(codex_adapter.requests) == 1
 
     ledger_data = json.loads((tmp_path / ".orc" / "ledger.json").read_text(encoding="utf-8"))
-    assert ledger_data["pools"]["claude_pro"]["exhausted_until"] is not None
-    assert ledger_data["pools"]["codex_plus"]["spent_units"] == 1
+    assert ledger_data["pools"]["claude"]["exhausted_until"] is not None
+    assert ledger_data["pools"]["codex"]["spent_units"] == 1
 
 
 def test_ladder_escalation_on_dumb_triage(tmp_path: Path) -> None:
@@ -179,12 +179,12 @@ def test_ladder_escalation_on_dumb_triage(tmp_path: Path) -> None:
     config = OrcConfig.model_validate(
         {
             "adapters": {
-                "claude": {"command": "claude", "pool": "claude_pro"},
-                "codex": {"command": "codex", "pool": "codex_plus"},
+                "claude": {"command": "claude", "pool": "claude"},
+                "codex": {"command": "codex", "pool": "codex"},
             },
             "pools": {
-                "claude_pro": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
-                "codex_plus": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
+                "claude": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
+                "codex": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
             },
             "lanes": {
                 "standard": {"candidates": ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]}

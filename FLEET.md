@@ -6,22 +6,27 @@ reviewDate: 2026-11-30
 
 This is the public roster for choosing a model, effort, and routing role. Operational
 budgets, reset windows, billing details, and time-limited credits belong in `orc.toml`
-or gitignored local configuration, never here.
+or gitignored local configuration, never here. Pool ids are plan-agnostic for the same
+reason: a tier in an id (`claude_pro` for a Max account) is both a billing detail and a
+fact that goes stale. `fable_paid` keeps its suffix because pay-per-token is a routing
+property, not a plan tier.
 
 ## Pools
 
 | Pool id | Models and effort levels | Routing role |
 |---|---|---|
-| `claude_pro` | Sonnet 5, Opus 5, Opus 4.8/4.7/4.6, Haiku 4.5 — low, medium, high, xhigh; max/ultracode when available | Quality lane; Opus 5 is the strongest included consultant |
-| `codex_plus` | GPT-5.6 Sol, Terra, Luna — light, medium, high, xhigh; ultra on Sol and Terra | Luna for volume, Terra for standard work, Sol for escalation |
-| `antigravity_gemini` | Gemini Flash and Pro via the `agy` CLI — effort low, medium, high | Flash is the default low-cost agent lane, and the `volume` quota fallback |
-| `antigravity_claude` | Claude Sonnet 4.6, Opus 4.6, GPT-OSS 120B | Reserve for browser-verified flows; exclude from the default ladder |
+| `claude` | Sonnet 5, Opus 5, Opus 4.8/4.7/4.6, Haiku 4.5 — low, medium, high, xhigh; max/ultracode when available | Quality lane; Opus 5 is the strongest included consultant |
+| `codex` | GPT-5.6 Sol, Terra, Luna — light, medium, high, xhigh; ultra on Sol and Terra | Luna for volume, Terra for standard work, Sol for escalation |
+| `antigravity_gemini` | via `agy`: `gemini-3.8/3.7/3.6-flash-{low,medium,high}`, `gemini-3.1-pro-{low,high}` | Flash is the default low-cost agent lane, and the `volume` quota fallback |
+| `antigravity_claude` | via `agy`: `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium` | Reserve for browser-verified flows; exclude from the default ladder |
 | `copilot` | Base models; Haiku, Sonnet, Opus, GPT-5.6 family | Default agent and budget reviewer lanes; do not use Copilot's built-in code-review mode |
 | `fable_paid` | Fable 5 | Confirmation-gated consultant of last resort |
 
-Model slugs for `antigravity_gemini` are provisional until confirmed against the installed
-`agy` CLI; the vendor documents slugs such as `gemini-3.8-flash-high` alongside a separate
-`--effort` flag, and which of the two carries the reasoning tier is not yet verified.
+Both Antigravity pools are served by one CLI (`agy`) but hold separate quota, confirmed by
+`agy -p /usage` returning two independent groups. The reasoning tier is baked into the model
+slug (`gemini-3.8-flash-high`) and `agy` also accepts a separate `--effort low|medium|high`;
+`agy models` lists no bare slug, so the adapter maps a candidate's `@effort` onto the slug
+suffix and leaves `--effort` unset. Confirm in the adapter's `live` test.
 
 ## Routing rules
 

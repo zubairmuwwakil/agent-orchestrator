@@ -42,8 +42,8 @@ orc "fix the flaky auth test"
 
 | Pool id | Models (effort levels) | Windows | Default role |
 |---|---|---|---|
-| `claude_pro` | Sonnet 5, Opus 5, Opus 4.8/4.7/4.6, Haiku 4.5 (low/medium/high/xhigh; max/ultracode session-only) | 5h + weekly | Quality lane; Opus 5 = strongest included model |
-| `codex_plus` | GPT-5.6 Sol, Terra, Luna (light/medium/high/xhigh; ultra on Sol+Terra) | weekly (5h currently lifted) | Luna = volume, Terra = standard, Sol = escalation |
+| `claude` | Sonnet 5, Opus 5, Opus 4.8/4.7/4.6, Haiku 4.5 (low/medium/high/xhigh; max/ultracode session-only) | 5h + weekly | Quality lane; Opus 5 = strongest included model |
+| `codex` | GPT-5.6 Sol, Terra, Luna (light/medium/high/xhigh; ultra on Sol+Terra) | weekly (5h currently lifted) | Luna = volume, Terra = standard, Sol = escalation |
 | `antigravity_gemini` | Gemini 3.7 Flash, Gemini 3.1 Pro (low/medium/high) | combined pool, drawn down at API-price ratio; 5h + weekly | Deepest pool; Flash = default cheap agent lane |
 | `antigravity_claude` | Claude Sonnet 4.6, Opus 4.6, GPT-OSS 120B | separate small fixed pool | Shallow — reserve for browser-verified flows; not in default ladder |
 | `copilot` | Base models (0x, unlimited); premium: Haiku 0.33x, Sonnet 1x, Opus 3x, GPT-5.6 family | monthly allowance | Free lane + budget reviewer lane. Never use Copilot's built-in code-review feature (13x). |
@@ -213,7 +213,7 @@ back to estimates only where it is absent.
 |---|---|---|
 | `claude` | `rate_limit_event` in `--output-format stream-json` | during a run |
 | `codex` | `rate_limits` in `$CODEX_HOME/sessions/.../rollout-<thread_id>.jsonl` | any time |
-| `agy` | `agy /usage`, `agy /credits` | any time |
+| `agy` | `agy -p "/usage" --output-format json` | any time, **and free** (0 turns, 0 tokens) |
 | `copilot` | none known | — estimate only |
 
 - A pool has **several simultaneous windows** (codex reports a 300-minute and a 10080-minute window).
@@ -373,11 +373,14 @@ calibratable from real data.
 
 ## 14. Open questions (resolve during build; none are blocking)
 
-- ~~**Antigravity CLI headless capabilities**~~ — **resolved 2026-09-07.** `agy` is a separate product
-  from Antigravity.app and is fully headless: `-p/--print`, `--model`, `--effort low|medium|high`,
-  `--output-format text|json|stream-json`, `--json-schema`, `--print-timeout` (default 5m), and
-  `agy /usage` for quota. Installed via the vendor script to `~/.local/bin/agy`. Flags are from docs
-  and **must be re-verified against `agy --help`** before the adapter is written. Promoted to M2.
+- ~~**Antigravity CLI headless capabilities**~~ — **resolved and verified 2026-09-07** against
+  `agy` 1.1.27 at `~/.local/bin/agy`. It is a separate product from Antigravity.app and is fully
+  headless: `-p/--print`, `--model`, `--effort low|medium|high`, `--output-format
+  text|json|stream-json`, `--json-schema`, `--print-timeout` (default 5m), `--mode
+  accept-edits|plan`, `--sandbox`, `--dangerously-skip-permissions`. Quota comes from
+  `agy -p "/usage" --output-format json`, which costs no tokens. Two gaps to design around: there is
+  **no working-directory flag** (set `cwd` on the subprocess and use `--add-dir`), and the reasoning
+  tier is carried by the model slug rather than `--effort`. Promoted to M2.
 - **Copilot billing mode** — owner must check whether their plan is legacy premium-requests or the June-2026 credits model and set the pool budget accordingly. *(owner)*
 - **Exact rate-limit error strings per CLI** — collect during adapter discovery; keep patterns in config. *(engineering)*
 - **Weekly reset timestamps per subscription** — owner observes and sets in `orc.toml` during calibration week. *(owner)*

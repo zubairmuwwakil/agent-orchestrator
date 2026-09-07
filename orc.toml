@@ -2,20 +2,20 @@
 
 [adapters.claude]
 command = "claude"
-pool = "claude_pro"
+pool = "claude"
 rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit"]
 
 [adapters.codex]
 command = "codex"
-pool = "codex_plus"
+pool = "codex"
 rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit", "too many requests", "429"]
 
-[pools.claude_pro]
+[pools.claude]
 window = "weekly"
 budget_units = 20
 flat_run_estimate = 1
 
-[pools.codex_plus]
+[pools.codex]
 window = "weekly"
 budget_units = 30
 flat_run_estimate = 1
