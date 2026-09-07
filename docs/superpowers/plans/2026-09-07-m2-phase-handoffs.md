@@ -10,6 +10,25 @@ Design and evidence: [`../specs/2026-09-07-m2-design.md`](../specs/2026-09-07-m2
 Routing follows [`FLEET.md`](../../../FLEET.md): route `(model, effort)`, bump effort on the
 same model before changing vendor, and spend the deepest pool that can do the job.
 
+## How to use a phase
+
+Each phase has a **Launch** line and a **Kickoff prompt**. Two steps:
+
+1. Run the Launch command from the repository root. It opens a fresh interactive session
+   with that phase's model and effort already set. Phases run in three different vendors'
+   CLIs — `agy`, `codex`, and `claude` — not three flag combinations of one tool.
+2. Paste the kickoff prompt as the first message.
+
+All three launch commands were verified against the installed binaries on 2026-09-07:
+`-m/--model` is a top-level codex flag, and `--model`/`--effort` are top-level on both
+claude and agy. For `agy` the reasoning tier goes in the model slug rather than `--effort`,
+because `agy models` lists no bare slug.
+
+**Running Claude Code from the desktop app:** the app has a model picker, but effort is only
+settable by flag. Phase 3 is the one where `xhigh` earns its keep, so launch that phase from
+a terminal rather than the app. Phase 2 at `high` is close enough to the app default that the
+picker alone is fine.
+
 ## Quota at time of writing (2026-09-07)
 
 | Pool | 5h | Weekly | Note |
