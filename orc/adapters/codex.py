@@ -6,8 +6,8 @@ import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult, AgentStatus
 from orc.config import AdapterConfig
@@ -66,8 +66,6 @@ class CodexAdapter(AgentAdapter):
             req.model,
             "-C",
             str(req.cwd),
-            "-s",
-            "workspace-write",
             "--approve-for-me",
         ]
         if req.effort:
@@ -81,6 +79,7 @@ class CodexAdapter(AgentAdapter):
                 text=True,
                 timeout=req.timeout_s,
                 check=False,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired as error:
             output = _as_text(error.stdout) + _as_text(error.stderr)
@@ -100,82 +99,85 @@ class CodexAdapter(AgentAdapter):
         if any(pattern in combined_output for pattern in self._rate_limit_patterns):
             status = "rate_limited"
 
-        text_parts: list[str] = []
-        ran_commands: list[str] = []
-        tool_call_count = 0
-        usage: dict[str, object] | None = None
-
-        for line in completed.stdout.splitlines():
-            line_str = line.strip()
-            if not line_str or not (line_str.startswith("{") and line_str.endswith("}")):
-                continue
-            try:
-                event = json.loads(line_str)
-            except json.JSONDecodeError:
-                continue
-
-            if not isinstance(event, dict):
-                continue
-
-            _extract_event_info(event, text_parts, ran_commands, usage)
-            if _is_tool_call(event):
-                tool_call_count += 1
-
-        final_text = "\n".join(text_parts).strip() if text_parts else raw_transcript
+        parsed = _parse_events(completed.stdout)
         return AgentResult(
             status=status,
-            text=final_text,
-            usage=usage,
+            text=parsed.text or raw_transcript,
+            usage=parsed.usage,
             transcript_path=transcript_path,
-            tool_call_count=tool_call_count if tool_call_count > 0 else None,
-            ran_commands=ran_commands,
+            tool_call_count=parsed.tool_call_count,
+            ran_commands=parsed.ran_commands,
         )
 
 
-def _is_tool_call(event: dict[str, Any]) -> bool:
-    event_type = str(event.get("type") or event.get("event") or "").casefold()
-    if any(k in event_type for k in ("tool", "call", "command", "function")):
-        return True
-    item = event.get("item")
-    if isinstance(item, dict):
-        item_type = str(item.get("type") or "").casefold()
-        if any(k in item_type for k in ("tool", "call", "command", "function")):
-            return True
-    return False
+_TOOL_ITEM_TYPES = frozenset(
+    {"command_execution", "file_change", "patch_apply", "mcp_tool_call", "web_search"}
+)
 
 
-def _extract_event_info(
-    event: dict[str, Any],
-    text_parts: list[str],
-    ran_commands: list[str],
-    usage_collector: dict[str, object] | None,
-) -> None:
-    # Command extraction
-    for key in ("command", "cmd"):
-        val = event.get(key)
-        if isinstance(val, str) and val not in ran_commands:
-            ran_commands.append(val)
-    item = event.get("item")
-    if isinstance(item, dict):
-        for key in ("command", "cmd"):
-            val = item.get(key)
-            if isinstance(val, str) and val not in ran_commands:
-                ran_commands.append(val)
+@dataclass(slots=True)
+class ParsedRun:
+    """Everything the router needs from one Codex JSONL stream."""
 
-    # Text extraction
-    for key in ("text", "content", "message"):
-        val = event.get(key)
-        if isinstance(val, str):
-            text_parts.append(val)
-    if isinstance(item, dict):
-        for key in ("text", "content", "message"):
-            val = item.get(key)
-            if isinstance(val, str):
-                text_parts.append(val)
+    text: str
+    ran_commands: list[str]
+    tool_call_count: int | None
+    usage: dict[str, object] | None
+    thread_id: str | None
 
-    # Usage extraction
-    if "usage" in event and isinstance(event["usage"], dict) and usage_collector is not None:
-        usage_collector.update(event["usage"])
+
+def _parse_events(stdout: str) -> ParsedRun:
+    """Parse `codex exec --json` NDJSON. Schema verified against codex 0.x, 2026-09-07."""
+    text_parts: list[str] = []
+    ran_commands: list[str] = []
+    tool_item_ids: set[str] = set()
+    usage: dict[str, object] | None = None
+    thread_id: str | None = None
+
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        if event_type == "thread.started":
+            candidate = event.get("thread_id")
+            thread_id = candidate if isinstance(candidate, str) else None
+        elif event_type == "turn.completed":
+            reported = event.get("usage")
+            if isinstance(reported, dict):
+                usage = dict(reported)
+        elif event_type == "item.completed":
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "agent_message":
+                text = item.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+            elif item_type in _TOOL_ITEM_TYPES:
+                item_id = item.get("id")
+                tool_item_ids.add(
+                    str(item_id) if item_id is not None else str(len(tool_item_ids))
+                )
+                command = item.get("command")
+                if isinstance(command, str) and command not in ran_commands:
+                    ran_commands.append(command)
+
+    return ParsedRun(
+        text="\n".join(text_parts).strip(),
+        ran_commands=ran_commands,
+        tool_call_count=len(tool_item_ids) or None,
+        usage=usage,
+        thread_id=thread_id,
+    )
 
 
 def _as_text(value: str | bytes | None) -> str:
