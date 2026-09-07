@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from dataclasses import dataclass
 
 from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult, AgentStatus
 from orc.config import AdapterConfig
@@ -44,7 +45,6 @@ class ClaudeCodeAdapter(AgentAdapter):
         transcript_path.parent.mkdir(parents=True, exist_ok=True)
         command = [
             self._command,
-            "--safe-mode",
             "--print",
             req.prompt,
             "--model",
@@ -52,9 +52,12 @@ class ClaudeCodeAdapter(AgentAdapter):
             "--effort",
             req.effort,
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
             "--permission-mode",
             "acceptEdits",
+            "--setting-sources",
+            "project",
         ]
         try:
             completed = subprocess.run(
@@ -64,6 +67,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                 text=True,
                 timeout=req.timeout_s,
                 check=False,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired as error:
             output = _as_text(error.stdout) + _as_text(error.stderr)
@@ -82,26 +86,98 @@ class ClaudeCodeAdapter(AgentAdapter):
         if any(pattern in combined_output for pattern in self._rate_limit_patterns):
             status = "rate_limited"
 
-        payload: dict[str, object] = {}
-        try:
-            parsed = json.loads(completed.stdout)
-            if isinstance(parsed, dict):
-                payload = parsed
-        except json.JSONDecodeError:
-            if status == "ok":
-                status = "error"
-
-        if payload.get("is_error") is True and status == "ok":
+        parsed = _parse_stream(completed.stdout)
+        if parsed.is_error:
             status = "fail"
-        result_text = payload.get("result")
-        text = result_text if isinstance(result_text, str) else raw_transcript
-        usage_data: dict[str, object] = {
-            key: payload[key]
-            for key in ("total_cost_usd", "duration_ms", "duration_api_ms", "num_turns")
-            if key in payload
-        }
-        usage = usage_data or None
-        return AgentResult(status, text, usage, transcript_path, None, [])
+        return AgentResult(
+            status=status,
+            text=parsed.text or raw_transcript,
+            usage=parsed.usage,
+            transcript_path=transcript_path,
+            tool_call_count=parsed.tool_call_count,
+            ran_commands=parsed.ran_commands,
+        )
+
+
+@dataclass(slots=True)
+class ParsedStream:
+    """Everything the router needs from one Claude Code stream-json run."""
+
+    text: str
+    ran_commands: list[str]
+    tool_call_count: int | None
+    usage: dict[str, object] | None
+    is_error: bool | None
+    rate_limit_info: dict[str, object] | None
+
+
+def _parse_stream(stdout: str) -> ParsedStream:
+    """Parse `--output-format stream-json` NDJSON. Verified against the CLI, 2026-09-07."""
+    text_parts: list[str] = []
+    ran_commands: list[str] = []
+    tool_calls = 0
+    usage: dict[str, object] | None = None
+    is_error: bool | None = None
+    rate_limit_info: dict[str, object] | None = None
+    final_text: str | None = None
+
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        if event_type == "assistant":
+            message = event.get("message")
+            blocks = message.get("content") if isinstance(message, dict) else None
+            for block in blocks or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    tool_calls += 1
+                    if block.get("name") == "Bash":
+                        tool_input = block.get("input")
+                        shell = (
+                            tool_input.get("command")
+                            if isinstance(tool_input, dict)
+                            else None
+                        )
+                        if isinstance(shell, str) and shell not in ran_commands:
+                            ran_commands.append(shell)
+                elif block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+        elif event_type == "rate_limit_event":
+            info = event.get("rate_limit_info")
+            if isinstance(info, dict):
+                rate_limit_info = info
+        elif event_type == "result":
+            error_flag = event.get("is_error")
+            is_error = bool(error_flag) if error_flag is not None else None
+            result_text = event.get("result")
+            if isinstance(result_text, str):
+                final_text = result_text
+            usage = {
+                key: event[key]
+                for key in ("total_cost_usd", "duration_ms", "duration_api_ms", "num_turns")
+                if key in event
+            } or None
+
+    return ParsedStream(
+        text=final_text if final_text is not None else "\n".join(text_parts).strip(),
+        ran_commands=ran_commands,
+        tool_call_count=tool_calls or None,
+        usage=usage,
+        is_error=is_error,
+        rate_limit_info=rate_limit_info,
+    )
 
 
 def _as_text(value: str | bytes | None) -> str:
