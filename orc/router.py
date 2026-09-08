@@ -122,6 +122,9 @@ def run_task(
     allow_destructive: bool = False,
     verify_runner: Callable[[Path, VerificationPlan, int], VerificationResult] | None = None,
     use_reserve: bool = False,
+    start_lane: str | None = None,
+    agent: str | None = None,
+    effort: str | None = None,
 ) -> TaskRun:
     """Run coding agent ladder on task in target, verifying and triaging each attempt."""
     from orc.gitops import ensure_safe_target
@@ -149,7 +152,9 @@ def run_task(
 
     # (lane, candidate) pairs so a lane's timeout override is known. The fallback lane is
     # held apart: it is entered only when every ladder rung is quota-blocked, never as a rung.
-    ladder_candidates, fallback_candidates = _candidate_ladder(config)
+    ladder_candidates, fallback_candidates = _candidate_ladder(
+        config, start_lane=start_lane, agent=agent, effort=effort
+    )
     candidate_list = list(ladder_candidates)
     if not candidate_list and "standard" in config.lanes:
         candidate_list = [("standard", c) for c in config.lanes["standard"].candidates]
@@ -309,6 +314,9 @@ def run_task(
 
 def _candidate_ladder(
     config: OrcConfig,
+    start_lane: str | None = None,
+    agent: str | None = None,
+    effort: str | None = None,
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Return (ladder, fallback) as (lane, candidate) pairs.
 
@@ -316,16 +324,52 @@ def _candidate_ladder(
     never as a rung: a cheap first rung would consume the fixed attempt budget and
     starve `quality` (SPEC §6).
     """
+    if start_lane is not None and start_lane not in config.lanes:
+        raise ValueError(f"unknown lane {start_lane!r}")
+    if effort is not None and effort not in config.ladder.effort_order:
+        raise ValueError(f"effort {effort!r} is not configured")
+
+    ladder_order = config.ladder.order
+    fallback_lane = config.ladder.fallback
+    if start_lane is not None:
+        if start_lane == fallback_lane:
+            ladder_order = [start_lane]
+            fallback_lane = None
+        elif start_lane in ladder_order:
+            ladder_order = ladder_order[ladder_order.index(start_lane) :]
+        else:
+            raise ValueError(f"lane {start_lane!r} is not a configured ladder rung or fallback")
+
     ladder = [
         (lane, candidate)
-        for lane in config.ladder.order
+        for lane in ladder_order
         if lane in config.lanes
         for candidate in config.lanes[lane].candidates
     ]
-    fallback_lane = config.ladder.fallback
     fallback: list[tuple[str, str]] = []
     if fallback_lane is not None and fallback_lane in config.lanes:
         fallback = [(fallback_lane, c) for c in config.lanes[fallback_lane].candidates]
+
+    if agent is not None:
+        if "@" in agent:
+            raise ValueError("--agent must be vendor:model; set effort separately with --effort")
+        candidates = ladder + fallback
+        matching = [
+            (lane, candidate)
+            for lane, candidate in candidates
+            if candidate.rsplit("@", 1)[0] == agent
+        ]
+        if not matching:
+            raise ValueError(f"agent {agent!r} is not a configured lane candidate")
+        lane, candidate = matching[0]
+        selected_effort = effort or parse_candidate(candidate)[2]
+        return [(lane, f"{agent}@{selected_effort}")], []
+
+    if effort is not None:
+        ladder = [(lane, f"{candidate.rsplit('@', 1)[0]}@{effort}") for lane, candidate in ladder]
+        fallback = [
+            (lane, f"{candidate.rsplit('@', 1)[0]}@{effort}") for lane, candidate in fallback
+        ]
     return ladder, fallback
 
 
