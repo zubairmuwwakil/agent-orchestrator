@@ -57,8 +57,13 @@ def test_codex_parses_real_recorded_events(tmp_path: Path) -> None:
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout=stdout, stderr="")
     )
     req = AgentRequest(
-        prompt="fix it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         result = adapter.run(req)
@@ -66,7 +71,10 @@ def test_codex_parses_real_recorded_events(tmp_path: Path) -> None:
     # item.started and item.completed share an id; counting keywords double-counts.
     assert result.tool_call_count == 1
     assert result.ran_commands == ['/bin/zsh -lc "pytest -q"']
-    assert result.text == "I'll run the requested shell command, then make only the specified append to a.py.\nDone."
+    assert (
+        result.text
+        == "I'll run the requested shell command, then make only the specified append to a.py.\nDone."
+    )
     assert result.usage is not None
     assert result.usage["input_tokens"] == 40157
 
@@ -78,8 +86,13 @@ def test_codex_never_combines_sandbox_and_approve_for_me(tmp_path: Path) -> None
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout="", stderr="")
     )
     req = AgentRequest(
-        prompt="fix it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         adapter.run(req)
@@ -95,8 +108,13 @@ def test_codex_passes_no_stdin(tmp_path: Path) -> None:
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout="", stderr="")
     )
     req = AgentRequest(
-        prompt="fix it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         adapter.run(req)
@@ -112,8 +130,13 @@ def test_codex_argv_is_accepted_by_the_real_cli(tmp_path: Path) -> None:
     adapter = CodexAdapter(_codex_config())
     transcript = tmp_path / "t.txt"
     req = AgentRequest(
-        prompt="Reply with exactly: OK", mode="agent", model="gpt-5.6-terra",
-        effort="low", cwd=tmp_path, timeout_s=180, transcript_path=transcript,
+        prompt="Reply with exactly: OK",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="low",
+        cwd=tmp_path,
+        timeout_s=180,
+        transcript_path=transcript,
     )
     result = adapter.run(req)
 
@@ -128,7 +151,8 @@ def _write_rollout(codex_home: Path, thread_id: str, used_5h: float, used_week: 
     session_dir.mkdir(parents=True, exist_ok=True)
     path = session_dir / f"rollout-2026-09-07T13-53-18-{thread_id}.jsonl"
     path.write_text(
-        json.dumps({"type": "session_meta", "payload": {"id": thread_id}}) + "\n"
+        json.dumps({"type": "session_meta", "payload": {"id": thread_id}})
+        + "\n"
         + json.dumps(
             {
                 "rate_limits": {

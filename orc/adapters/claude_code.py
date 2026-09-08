@@ -99,9 +99,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         ):
             status = "rate_limited"
         quota = (
-            _observation_from_rate_limit(parsed.rate_limit_info)
-            if parsed.rate_limit_info
-            else None
+            _observation_from_rate_limit(parsed.rate_limit_info) if parsed.rate_limit_info else None
         )
         return AgentResult(
             status=status,
@@ -158,11 +156,7 @@ def _parse_stream(stdout: str) -> ParsedStream:
                     tool_calls += 1
                     if block.get("name") == "Bash":
                         tool_input = block.get("input")
-                        shell = (
-                            tool_input.get("command")
-                            if isinstance(tool_input, dict)
-                            else None
-                        )
+                        shell = tool_input.get("command") if isinstance(tool_input, dict) else None
                         if isinstance(shell, str) and shell not in ran_commands:
                             ran_commands.append(shell)
                 elif block.get("type") == "text":

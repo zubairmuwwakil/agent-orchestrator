@@ -167,9 +167,7 @@ def test_without_telemetry_the_estimate_still_applies(tmp_path: Path) -> None:
 def test_estimated_spend_resets_when_the_window_rolls_over(tmp_path: Path) -> None:
     """D7: window_started was written and never read, so spend accrued forever."""
     ledger = Ledger(tmp_path / "ledger.json")
-    pool = PoolConfig.model_validate(
-        {"windows": ["5h"], "budget_units": 2, "flat_run_estimate": 1}
-    )
+    pool = PoolConfig.model_validate({"windows": ["5h"], "budget_units": 2, "flat_run_estimate": 1})
     ledger.record_run("copilot", pool)
     ledger.record_run("copilot", pool)
     assert not ledger.eligibility("copilot", pool).ok
@@ -210,12 +208,8 @@ def test_eligibility_does_not_crash_on_a_naive_persisted_timestamp(tmp_path: Pat
 def test_estimate_resets_when_window_started_is_missing(tmp_path: Path) -> None:
     """D7 hardening: a corrupt estimate entry with no window_started must not stay stuck."""
     path = tmp_path / "ledger.json"
-    path.write_text(
-        json.dumps({"pools": {"copilot": {"spent_units": 99.0}}}), encoding="utf-8"
-    )
-    pool = PoolConfig.model_validate(
-        {"windows": ["5h"], "budget_units": 2, "flat_run_estimate": 1}
-    )
+    path.write_text(json.dumps({"pools": {"copilot": {"spent_units": 99.0}}}), encoding="utf-8")
+    pool = PoolConfig.model_validate({"windows": ["5h"], "budget_units": 2, "flat_run_estimate": 1})
 
     assert Ledger(path).eligibility("copilot", pool).ok
 

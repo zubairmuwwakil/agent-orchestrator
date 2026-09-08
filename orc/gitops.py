@@ -93,9 +93,7 @@ def ensure_orc_excluded(target: Path) -> None:
             "refusing to write .git/info/exclude: it or its parent directory is a symlink"
         )
     if exclude_path.is_file() and exclude_path.stat().st_nlink > 1:
-        raise SafetyError(
-            "refusing to write .git/info/exclude: it has more than one hard link"
-        )
+        raise SafetyError("refusing to write .git/info/exclude: it has more than one hard link")
     info_dir.mkdir(parents=True, exist_ok=True)
     existing = exclude_path.read_text(encoding="utf-8") if exclude_path.is_file() else ""
     if any(line.strip() == _EXCLUDE_ENTRY for line in existing.splitlines()):
@@ -191,18 +189,14 @@ def _intent_to_add_run_work(target: Path, env: dict[str, str]) -> subprocess.Com
     added = _git(target, "add", "--intent-to-add", "--all", env=env)
     if added.returncode != 0:
         return added
-    ignored = _git(
-        target, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", env=env
-    )
+    ignored = _git(target, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", env=env)
     if ignored.returncode != 0:
         return added
     skip = set(_DEFAULT_SKIP_DIRS)
     paths = [
         p
         for p in ignored.stdout.split("\0")
-        if p
-        and not p.startswith(_EXCLUDE_ENTRY)
-        and not skip.intersection(PurePosixPath(p).parts)
+        if p and not p.startswith(_EXCLUDE_ENTRY) and not skip.intersection(PurePosixPath(p).parts)
     ]
     if paths:
         return _git(target, "add", "--intent-to-add", "--force", "--", *paths, env=env)

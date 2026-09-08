@@ -183,9 +183,7 @@ def _parse_events(stdout: str) -> ParsedRun:
                     text_parts.append(text)
             elif item_type in _TOOL_ITEM_TYPES:
                 item_id = item.get("id")
-                tool_item_ids.add(
-                    str(item_id) if item_id is not None else str(len(tool_item_ids))
-                )
+                tool_item_ids.add(str(item_id) if item_id is not None else str(len(tool_item_ids)))
                 command = item.get("command")
                 if isinstance(command, str) and command not in ran_commands:
                     ran_commands.append(command)

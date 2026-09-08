@@ -16,8 +16,13 @@ def _config() -> AdapterConfig:
 
 def _request(tmp_path: Path) -> AgentRequest:
     return AgentRequest(
-        prompt="fix it", mode="agent", model="sonnet", effort="high",
-        cwd=tmp_path, timeout_s=900, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="sonnet",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=900,
+        transcript_path=tmp_path / "t.txt",
     )
 
 
@@ -31,7 +36,7 @@ def test_claude_extracts_tool_calls_and_commands(tmp_path: Path) -> None:
     with patch("subprocess.run", mock_run):
         result = adapter.run(_request(tmp_path))
 
-    assert result.tool_call_count == 2          # one Bash, one Edit
+    assert result.tool_call_count == 2  # one Bash, one Edit
     assert result.ran_commands == ["pytest -q"]  # Bash commands only
     assert result.text == "Fixed the failing test."
     assert result.status == "ok"

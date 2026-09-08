@@ -33,9 +33,7 @@ def _config() -> OrcConfig:
     return OrcConfig.model_validate(
         {
             "adapters": {"claude": {"command": "claude"}},
-            "pools": {
-                "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
-            },
+            "pools": {"claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}},
             "lanes": {"standard": {"candidates": ["claude:sonnet-5@high"]}},
             "ladder": {"effort_order": ["low", "medium", "high", "xhigh"]},
         }
@@ -289,9 +287,7 @@ def test_agent_timeout_is_independent_of_the_verify_timeout(tmp_path: Path) -> N
     config = OrcConfig.model_validate(
         {
             "adapters": {"claude": {"command": "claude"}},
-            "pools": {
-                "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
-            },
+            "pools": {"claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}},
             "lanes": {"standard": {"candidates": ["claude:sonnet@high"]}},
             "ladder": {"effort_order": ["high", "xhigh"]},
             "agents": {"timeout_s": 900},
@@ -317,9 +313,7 @@ def test_lane_timeout_overrides_the_agents_default(tmp_path: Path) -> None:
     config = OrcConfig.model_validate(
         {
             "adapters": {"claude": {"command": "claude"}},
-            "pools": {
-                "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
-            },
+            "pools": {"claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}},
             "lanes": {"standard": {"candidates": ["claude:sonnet@high"], "timeout_s": 1800}},
             "ladder": {"order": ["standard"], "effort_order": ["high", "xhigh"]},
             "agents": {"timeout_s": 900},
@@ -372,7 +366,9 @@ def _two_vendor_config(**overrides: object) -> OrcConfig:
             "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
             "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
             "antigravity_gemini": {
-                "windows": ["weekly"], "budget_units": 50, "flat_run_estimate": 1
+                "windows": ["weekly"],
+                "budget_units": 50,
+                "flat_run_estimate": 1,
             },
         },
         "lanes": {
@@ -573,7 +569,9 @@ def test_a_rate_limited_run_counts_against_the_attempt_cap(tmp_path: Path) -> No
                 "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
                 "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
                 "antigravity_gemini": {
-                    "windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1
+                    "windows": ["weekly"],
+                    "budget_units": 10,
+                    "flat_run_estimate": 1,
                 },
             },
             "lanes": {
@@ -600,7 +598,10 @@ def test_a_rate_limited_run_counts_against_the_attempt_cap(tmp_path: Path) -> No
     verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
     run = run_task(
-        "do it", tmp_path, config, adapters=adapters,
+        "do it",
+        tmp_path,
+        config,
+        adapters=adapters,
         verify_runner=lambda _t, _p, _to: verify_ok,
     )
 

@@ -2,31 +2,87 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from orc.ledger import PoolStatus
 from orc.router import TaskRun, parse_candidate
 
+# Widths chosen so the widest row fits an 80-column terminal; the table previously
+# ran to 96 and folded `source` onto its own line.
+_QUOTA_COLUMNS: tuple[tuple[str, int], ...] = (
+    ("pool", 20),
+    ("window", 8),
+    ("used", 8),
+    ("resets", 27),
+    ("source", 13),
+)
+
+
+def _parse_moment(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _format_reset(value: str | None, now: datetime | None = None) -> str:
+    """Show the reset instant and how far off it is; the delay is the decision-relevant part."""
+    moment = _parse_moment(value)
+    if moment is None:
+        return "-"
+    stamp = moment.strftime("%Y-%m-%d %H:%MZ")
+    remaining = int((moment - (now or datetime.now(UTC))).total_seconds())
+    if remaining <= 0:
+        return f"{stamp} (now)"
+    days, rest = divmod(remaining, 86400)
+    hours, rest = divmod(rest, 3600)
+    relative = f"{days}d {hours}h" if days else f"{hours}h {rest // 60}m"
+    return f"{stamp} ({relative})"
+
+
+def _quota_rows(status: PoolStatus) -> list[tuple[str, ...]]:
+    """One row per window. `used` is a fraction of the window in every row, observed or not."""
+    if status.windows:
+        return [
+            (
+                status.pool_id,
+                str(window.get("kind", status.window)),
+                f"{float(window.get('used_fraction', 0.0)):.1%}",
+                _format_reset(str(window.get("resets_at")) or None),
+                status.source,
+            )
+            for window in status.windows
+        ]
+    spent_fraction = status.spent_units / status.budget_units if status.budget_units else 0.0
+    return [
+        (
+            status.pool_id,
+            status.window,
+            f"{min(spent_fraction, 1.0):.1%}",
+            _format_reset(status.exhausted_until),
+            "estimated",
+        )
+    ]
+
 
 def format_quota(statuses: list[PoolStatus]) -> str:
-    """Render per-window observed utilization or the estimated fallback."""
+    """Render per-window utilization, or the estimated fallback, in one column meaning."""
     if not statuses:
         return "no pools configured"
-    header = f"{'pool':<22}{'window':<10}{'utilization':<30}{'reset':<28}{'source'}"
+
+    def row(cells: tuple[str, ...]) -> str:
+        return "".join(
+            f"{cell:<{width}}" for cell, (_, width) in zip(cells, _QUOTA_COLUMNS, strict=True)
+        ).rstrip()
+
+    header = row(tuple(name for name, _ in _QUOTA_COLUMNS))
     lines = [header, "-" * len(header)]
     for status in statuses:
-        if status.windows:
-            for window in status.windows:
-                used = float(window.get("used_fraction", 0.0))
-                reset = str(window.get("resets_at", "-"))
-                kind = str(window.get("kind", status.window))
-                lines.append(
-                    f"{status.pool_id:<22}{kind:<10}{used:.1%}{'':<25}{reset:<28}{status.source}"
-                )
-            continue
-        remaining = f"{status.remaining_units:g} / {status.budget_units:g} units (estimated)"
-        exhausted = status.exhausted_until or "-"
-        lines.append(
-            f"{status.pool_id:<22}{status.window:<10}{remaining:<30}{exhausted:<28}estimated"
-        )
+        lines.extend(row(cells) for cells in _quota_rows(status))
+    lines.append("")
+    lines.append("used = fraction of that window consumed. Estimated rows are advisory only.")
     return "\n".join(lines)
 
 

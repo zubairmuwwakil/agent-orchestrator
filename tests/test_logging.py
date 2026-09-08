@@ -32,6 +32,8 @@ def test_the_full_prompt_is_still_available_in_the_run_directory(tmp_path: Path)
     task = "fix the flaky auth test"
     verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
-    run = run_task(task, tmp_path, _config(), FakeAdapter(), verify_runner=lambda _t, _p, _to: verify_ok)
+    run = run_task(
+        task, tmp_path, _config(), FakeAdapter(), verify_runner=lambda _t, _p, _to: verify_ok
+    )
 
     assert task in (run.run_dir / "prompt-1.txt").read_text(encoding="utf-8")

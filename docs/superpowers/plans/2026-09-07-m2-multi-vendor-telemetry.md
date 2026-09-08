@@ -201,8 +201,13 @@ def test_codex_parses_real_recorded_events(tmp_path: Path) -> None:
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout=stdout, stderr="")
     )
     req = AgentRequest(
-        prompt="fix it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         result = adapter.run(req)
@@ -210,7 +215,10 @@ def test_codex_parses_real_recorded_events(tmp_path: Path) -> None:
     # item.started and item.completed share an id; counting keywords double-counts.
     assert result.tool_call_count == 1
     assert result.ran_commands == ['/bin/zsh -lc "pytest -q"']
-    assert result.text == "I'll run the requested shell command, then make only the specified append to a.py.\nDone."
+    assert (
+        result.text
+        == "I'll run the requested shell command, then make only the specified append to a.py.\nDone."
+    )
     assert result.usage is not None
     assert result.usage["input_tokens"] == 40157
 
@@ -222,8 +230,13 @@ def test_codex_never_combines_sandbox_and_approve_for_me(tmp_path: Path) -> None
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout="", stderr="")
     )
     req = AgentRequest(
-        prompt="fix it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         adapter.run(req)
@@ -239,8 +252,13 @@ def test_codex_passes_no_stdin(tmp_path: Path) -> None:
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout="", stderr="")
     )
     req = AgentRequest(
-        prompt="fix it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         adapter.run(req)
@@ -256,8 +274,13 @@ def test_codex_argv_is_accepted_by_the_real_cli(tmp_path: Path) -> None:
     adapter = CodexAdapter(_codex_config())
     transcript = tmp_path / "t.txt"
     req = AgentRequest(
-        prompt="Reply with exactly: OK", mode="agent", model="gpt-5.6-terra",
-        effort="low", cwd=tmp_path, timeout_s=180, transcript_path=transcript,
+        prompt="Reply with exactly: OK",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="low",
+        cwd=tmp_path,
+        timeout_s=180,
+        transcript_path=transcript,
     )
     result = adapter.run(req)
 
@@ -449,8 +472,13 @@ def _config() -> AdapterConfig:
 
 def _request(tmp_path: Path) -> AgentRequest:
     return AgentRequest(
-        prompt="fix it", mode="agent", model="sonnet", effort="high",
-        cwd=tmp_path, timeout_s=900, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="sonnet",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=900,
+        transcript_path=tmp_path / "t.txt",
     )
 
 
@@ -464,7 +492,7 @@ def test_claude_extracts_tool_calls_and_commands(tmp_path: Path) -> None:
     with patch("subprocess.run", mock_run):
         result = adapter.run(_request(tmp_path))
 
-    assert result.tool_call_count == 2          # one Bash, one Edit
+    assert result.tool_call_count == 2  # one Bash, one Edit
     assert result.ran_commands == ["pytest -q"]  # Bash commands only
     assert result.text == "Fixed the failing test."
     assert result.status == "ok"
@@ -968,8 +996,15 @@ In `orc/config.py`:
 class SafetyConfig(BaseModel):
     test_path_patterns: list[str] = Field(
         default_factory=lambda: [
-            "tests/**", "test/**", "spec/**",
-            "test_*.py", "*_test.py", "*_test.go", "*.test.ts", "*.test.js", "*.spec.ts",
+            "tests/**",
+            "test/**",
+            "spec/**",
+            "test_*.py",
+            "*_test.py",
+            "*_test.go",
+            "*.test.ts",
+            "*.test.js",
+            "*.spec.ts",
             "src/test/**",
         ]
     )
@@ -1045,7 +1080,10 @@ def test_agent_timeout_is_independent_of_the_verify_timeout(tmp_path: Path) -> N
     verify_result = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
     run_task(
-        "do it", tmp_path, config, fake,
+        "do it",
+        tmp_path,
+        config,
+        fake,
         verify_runner=lambda _t, _p, _to: verify_result,
     )
 
@@ -1294,7 +1332,8 @@ def _write_rollout(codex_home: Path, thread_id: str, used_5h: float, used_week: 
     session_dir.mkdir(parents=True, exist_ok=True)
     path = session_dir / f"rollout-2026-09-07T13-53-18-{thread_id}.jsonl"
     path.write_text(
-        json.dumps({"type": "session_meta", "payload": {"id": thread_id}}) + "\n"
+        json.dumps({"type": "session_meta", "payload": {"id": thread_id}})
+        + "\n"
         + json.dumps(
             {
                 "rate_limits": {
@@ -1361,7 +1400,11 @@ def _observation_from_rate_limit(info: dict[str, object]) -> QuotaObservation | 
     kind = _CLAUDE_WINDOW_KINDS.get(str(info.get("rateLimitType", "")))
     utilization = info.get("utilization")
     resets_at = info.get("resetsAt")
-    if kind is None or not isinstance(utilization, int | float) or not isinstance(resets_at, int | float):
+    if (
+        kind is None
+        or not isinstance(utilization, int | float)
+        or not isinstance(resets_at, int | float)
+    ):
         return None
     return QuotaObservation(
         windows=[
@@ -1595,9 +1638,7 @@ def test_without_telemetry_the_estimate_still_applies(tmp_path: Path) -> None:
 def test_estimated_spend_resets_when_the_window_rolls_over(tmp_path: Path) -> None:
     """D7: window_started was written and never read, so spend accrued forever."""
     ledger = Ledger(tmp_path / "ledger.json")
-    pool = PoolConfig.model_validate(
-        {"windows": ["5h"], "budget_units": 2, "flat_run_estimate": 1}
-    )
+    pool = PoolConfig.model_validate({"windows": ["5h"], "budget_units": 2, "flat_run_estimate": 1})
     ledger.record_run("copilot", pool)
     ledger.record_run("copilot", pool)
     assert not ledger.eligibility("copilot", pool).ok
@@ -1619,8 +1660,8 @@ In `orc/config.py`, replace `PoolConfig`:
 class PoolConfig(BaseModel):
     # A pool has several simultaneous windows: codex reports a 5h and a weekly one.
     windows: list[Literal["5h", "weekly", "monthly"]] = Field(min_length=1)
-    budget_units: float          # fallback only, used when no telemetry is available
-    flat_run_estimate: float     # fallback only
+    budget_units: float  # fallback only, used when no telemetry is available
+    flat_run_estimate: float  # fallback only
     reserve_fraction: float = Field(default=0.15, ge=0.0, lt=1.0)
     quota_group: str | None = None  # vendor-side group name, when one CLI serves two pools
 ```
@@ -1638,7 +1679,7 @@ class Eligibility:
     """Why a pool may or may not be spent right now."""
 
     ok: bool
-    reason: str                      # "", "reserve", "budget", or "rate_limited"
+    reason: str  # "", "reserve", "budget", or "rate_limited"
     blocked_window: str | None = None
     resets_at: datetime | None = None
     source: str = "estimated"
@@ -1697,7 +1738,11 @@ class Ledger:
                 used = float(window.get("used_fraction", 0.0))
                 if used >= ceiling:
                     return Eligibility(
-                        False, "reserve", str(window.get("kind")), resets_at, str(entry.get("source", "observed"))
+                        False,
+                        "reserve",
+                        str(window.get("kind")),
+                        resets_at,
+                        str(entry.get("source", "observed")),
                     )
             return Eligibility(True, "", None, None, str(entry.get("source", "observed")))
 
@@ -1792,7 +1837,9 @@ def _two_vendor_config(**overrides: object) -> OrcConfig:
             "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
             "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
             "antigravity_gemini": {
-                "windows": ["weekly"], "budget_units": 50, "flat_run_estimate": 1
+                "windows": ["weekly"],
+                "budget_units": 50,
+                "flat_run_estimate": 1,
             },
         },
         "lanes": {
@@ -1826,13 +1873,15 @@ def test_a_reserve_blocked_pool_is_skipped_before_a_run_is_spent(tmp_path: Path)
     verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
     run = run_task(
-        "do it", tmp_path, config,
+        "do it",
+        tmp_path,
+        config,
         adapters={"claude": claude_adapter, "codex": codex_adapter},
         verify_runner=lambda _t, _p, _to: verify_ok,
     )
 
     assert run.verified
-    assert claude_adapter.requests == []      # never spent
+    assert claude_adapter.requests == []  # never spent
     assert len(codex_adapter.requests) == 1
 
 
@@ -1851,7 +1900,9 @@ def test_every_rung_blocked_degrades_to_the_volume_lane(tmp_path: Path) -> None:
     verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
     run = run_task(
-        "do it", tmp_path, config,
+        "do it",
+        tmp_path,
+        config,
         adapters={
             "claude": ReroutingFakeAdapter("claude"),
             "codex": ReroutingFakeAdapter("codex"),
@@ -1877,7 +1928,9 @@ def test_use_reserve_spends_a_blocked_pool(tmp_path: Path) -> None:
     verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
     run_task(
-        "do it", tmp_path, config,
+        "do it",
+        tmp_path,
+        config,
         adapters={"claude": claude_adapter, "codex": ReroutingFakeAdapter("codex")},
         verify_runner=lambda _t, _p, _to: verify_ok,
         use_reserve=True,
@@ -1897,14 +1950,16 @@ def test_the_run_records_why_it_escalated(tmp_path: Path) -> None:
         ]
     )
     run = run_task(
-        "do it", tmp_path, config,
+        "do it",
+        tmp_path,
+        config,
         adapters={"claude": ReroutingFakeAdapter("claude"), "codex": ReroutingFakeAdapter("codex")},
         verify_runner=lambda _t, _p, _to: next(results),
     )
 
     assert run.attempts[0].triage in {"lazy", "dumb"}
     assert run.attempts[0].wall_s >= 0.0
-    assert run.attempts[-1].triage is None      # the successful attempt was not triaged
+    assert run.attempts[-1].triage is None  # the successful attempt was not triaged
 ```
 
 Add the imports these need at the top of `tests/test_router.py`: `from datetime import UTC, datetime, timedelta`, `from orc.adapters.base import QuotaObservation, QuotaWindow`, `from orc.ledger import Ledger`.
@@ -1945,7 +2000,9 @@ def _candidate_ladder(config: OrcConfig) -> tuple[list[tuple[str, str]], list[tu
     fallback_lane = config.ladder.fallback
     fallback = [
         (fallback_lane, candidate)
-        for candidate in (config.lanes[fallback_lane].candidates if fallback_lane in config.lanes else [])
+        for candidate in (
+            config.lanes[fallback_lane].candidates if fallback_lane in config.lanes else []
+        )
     ]
     return ladder, fallback
 ```
@@ -2059,8 +2116,13 @@ def _config() -> AdapterConfig:
 
 def _request(tmp_path: Path, effort: str = "medium") -> AgentRequest:
     return AgentRequest(
-        prompt="fix it", mode="agent", model="gemini-3.8-flash", effort=effort,
-        cwd=tmp_path, timeout_s=900, transcript_path=tmp_path / "t.txt",
+        prompt="fix it",
+        mode="agent",
+        model="gemini-3.8-flash",
+        effort=effort,
+        cwd=tmp_path,
+        timeout_s=900,
+        transcript_path=tmp_path / "t.txt",
     )
 
 
@@ -2177,7 +2239,10 @@ class AntigravityAdapter(AgentAdapter):
         try:
             completed = subprocess.run(
                 [self._command, "models"],
-                capture_output=True, text=True, timeout=15, check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
                 stdin=subprocess.DEVNULL,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -2214,17 +2279,26 @@ class AntigravityAdapter(AgentAdapter):
         ]
         try:
             completed = subprocess.run(
-                command, cwd=req.cwd, capture_output=True, text=True,
-                timeout=req.timeout_s + 30, check=False, stdin=subprocess.DEVNULL,
+                command,
+                cwd=req.cwd,
+                capture_output=True,
+                text=True,
+                timeout=req.timeout_s + 30,
+                check=False,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired as error:
-            transcript_path.write_text(_as_text(error.stdout) + _as_text(error.stderr), encoding="utf-8")
+            transcript_path.write_text(
+                _as_text(error.stdout) + _as_text(error.stderr), encoding="utf-8"
+            )
             return AgentResult("timeout", "agy timed out", None, transcript_path, None, [])
         except OSError as error:
             transcript_path.write_text(str(error), encoding="utf-8")
             return AgentResult("unavailable", str(error), None, transcript_path, None, [])
 
-        raw = completed.stdout + (f"\n--- stderr ---\n{completed.stderr}" if completed.stderr else "")
+        raw = completed.stdout + (
+            f"\n--- stderr ---\n{completed.stderr}" if completed.stderr else ""
+        )
         transcript_path.write_text(raw, encoding="utf-8")
         status: AgentStatus = "ok" if completed.returncode == 0 else "fail"
         if any(pattern in raw.casefold() for pattern in self._rate_limit_patterns):
@@ -2310,19 +2384,31 @@ _USAGE_ENVELOPE = json.dumps(
                     {
                         "name": "Gemini Models",
                         "buckets": [
-                            {"window": "weekly", "remaining_fraction": 0.6857,
-                             "reset_time": "2026-09-11T03:55:06Z"},
-                            {"window": "5h", "remaining_fraction": 0.8611,
-                             "reset_time": "2026-09-07T22:24:46Z"},
+                            {
+                                "window": "weekly",
+                                "remaining_fraction": 0.6857,
+                                "reset_time": "2026-09-11T03:55:06Z",
+                            },
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 0.8611,
+                                "reset_time": "2026-09-07T22:24:46Z",
+                            },
                         ],
                     },
                     {
                         "name": "Claude and GPT models",
                         "buckets": [
-                            {"window": "weekly", "remaining_fraction": 0.7492,
-                             "reset_time": "2026-09-14T16:42:06Z"},
-                            {"window": "5h", "remaining_fraction": 0.2475,
-                             "reset_time": "2026-09-07T21:42:06Z"},
+                            {
+                                "window": "weekly",
+                                "remaining_fraction": 0.7492,
+                                "reset_time": "2026-09-14T16:42:06Z",
+                            },
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 0.2475,
+                                "reset_time": "2026-09-07T21:42:06Z",
+                            },
                         ],
                     },
                 ]
@@ -2365,53 +2451,57 @@ Expected: FAIL — `AntigravityAdapter` takes no `quota_group`.
 - [ ] **Step 3: Implement**
 
 ```python
-    def __init__(self, config: AdapterConfig, quota_group: str | None = None) -> None:
-        ...
-        self._quota_group = quota_group
+def __init__(self, config: AdapterConfig, quota_group: str | None = None) -> None:
+    ...
+    self._quota_group = quota_group
 
-    def quota_probe(self) -> QuotaObservation | None:
-        """Read utilization for this pool's group. Costs zero turns and zero tokens."""
-        if self._quota_group is None or shutil.which(self._command) is None:
-            return None
-        try:
-            completed = subprocess.run(
-                [self._command, "--print", "/usage", "--output-format", "json"],
-                capture_output=True, text=True, timeout=60, check=False,
-                stdin=subprocess.DEVNULL,
-            )
-            envelope = json.loads(completed.stdout)
-        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-            return None
-        if not isinstance(envelope, dict):
-            return None
 
-        command = envelope.get("command")
-        data = command.get("data") if isinstance(command, dict) else None
-        groups = data.get("groups") if isinstance(data, dict) else None
-        for group in groups or []:
-            if not isinstance(group, dict) or group.get("name") != self._quota_group:
-                continue
-            windows: list[QuotaWindow] = []
-            for bucket in group.get("buckets") or []:
-                if not isinstance(bucket, dict):
-                    continue
-                kind = bucket.get("window")
-                remaining = bucket.get("remaining_fraction")
-                reset_time = bucket.get("reset_time")
-                if kind not in {"5h", "weekly", "monthly"}:
-                    continue
-                if not isinstance(remaining, int | float) or not isinstance(reset_time, str):
-                    continue
-                windows.append(
-                    QuotaWindow(
-                        kind,
-                        1.0 - float(remaining),  # agy reports remaining, orc stores used
-                        datetime.fromisoformat(reset_time.replace("Z", "+00:00")),
-                    )
-                )
-            if windows:
-                return QuotaObservation(windows, datetime.now(UTC), "command")
+def quota_probe(self) -> QuotaObservation | None:
+    """Read utilization for this pool's group. Costs zero turns and zero tokens."""
+    if self._quota_group is None or shutil.which(self._command) is None:
         return None
+    try:
+        completed = subprocess.run(
+            [self._command, "--print", "/usage", "--output-format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+        envelope = json.loads(completed.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    if not isinstance(envelope, dict):
+        return None
+
+    command = envelope.get("command")
+    data = command.get("data") if isinstance(command, dict) else None
+    groups = data.get("groups") if isinstance(data, dict) else None
+    for group in groups or []:
+        if not isinstance(group, dict) or group.get("name") != self._quota_group:
+            continue
+        windows: list[QuotaWindow] = []
+        for bucket in group.get("buckets") or []:
+            if not isinstance(bucket, dict):
+                continue
+            kind = bucket.get("window")
+            remaining = bucket.get("remaining_fraction")
+            reset_time = bucket.get("reset_time")
+            if kind not in {"5h", "weekly", "monthly"}:
+                continue
+            if not isinstance(remaining, int | float) or not isinstance(reset_time, str):
+                continue
+            windows.append(
+                QuotaWindow(
+                    kind,
+                    1.0 - float(remaining),  # agy reports remaining, orc stores used
+                    datetime.fromisoformat(reset_time.replace("Z", "+00:00")),
+                )
+            )
+        if windows:
+            return QuotaObservation(windows, datetime.now(UTC), "command")
+    return None
 ```
 
 - [ ] **Step 4: Wire the third vendor into `orc.toml`**
@@ -2512,7 +2602,9 @@ def test_the_full_prompt_is_still_available_in_the_run_directory(tmp_path: Path)
     task = "fix the flaky auth test"
     verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
 
-    run = run_task(task, tmp_path, _config(), FakeAdapter(), verify_runner=lambda _t, _p, _to: verify_ok)
+    run = run_task(
+        task, tmp_path, _config(), FakeAdapter(), verify_runner=lambda _t, _p, _to: verify_ok
+    )
 
     assert task in (run.run_dir / "prompt-1.txt").read_text(encoding="utf-8")
 ```
@@ -2553,8 +2645,8 @@ def _log_task_run(
             }
             for attempt in task_run.attempts
         ],
-        "reviewer": None,                       # M3
-        "findings": {"p0": 0, "p1": 0, "p2": 0, "p3": 0},   # M3
+        "reviewer": None,  # M3
+        "findings": {"p0": 0, "p1": 0, "p2": 0, "p3": 0},  # M3
         "outcome": "verified" if task_run.verified else "failed",
         "wall_s": round(wall_s, 2),
         "est_usage": _usage_summary(task_run),
@@ -2658,16 +2750,26 @@ def test_a_task_about_rate_limiting_does_not_exhaust_the_pool(tmp_path: Path) ->
     """D11: substring-scanning the whole transcript let the agent's own words trip it."""
     adapter = CodexAdapter(_codex_config())
     stdout = json.dumps(
-        {"type": "item.completed",
-         "item": {"id": "i0", "type": "agent_message",
-                  "text": "I added a rate limit to the login endpoint."}}
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "i0",
+                "type": "agent_message",
+                "text": "I added a rate limit to the login endpoint.",
+            },
+        }
     )
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(["codex"], 0, stdout=stdout, stderr="")
     )
     req = AgentRequest(
-        prompt="add rate limiting", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="add rate limiting",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         result = adapter.run(req)
@@ -2683,8 +2785,13 @@ def test_a_real_rate_limit_on_stderr_is_still_detected(tmp_path: Path) -> None:
         )
     )
     req = AgentRequest(
-        prompt="do it", mode="agent", model="gpt-5.6-terra", effort="high",
-        cwd=tmp_path, timeout_s=30, transcript_path=tmp_path / "t.txt",
+        prompt="do it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
     )
     with patch("subprocess.run", mock_run):
         assert adapter.run(req).status == "rate_limited"
@@ -2736,7 +2843,9 @@ Add `import os`.
 Replace the whole-transcript scan with a helper used by each adapter:
 
 ```python
-def _is_rate_limited(stderr: str, agent_text: str, returncode: int, patterns: tuple[str, ...]) -> bool:
+def _is_rate_limited(
+    stderr: str, agent_text: str, returncode: int, patterns: tuple[str, ...]
+) -> bool:
     """Scan stderr always; scan the agent's own words only when the run failed.
 
     Otherwise a task about rate limiting marks its own pool exhausted.
@@ -2799,7 +2908,7 @@ def test_bare_task_and_subcommands_coexist() -> None:
 
 def test_quota_does_not_need_a_target_repo(tmp_path) -> None:
     result = runner.invoke(app, ["quota", "--target", str(tmp_path)])
-    assert result.exit_code in {0, 2}          # 2 only when no config is discoverable
+    assert result.exit_code in {0, 2}  # 2 only when no config is discoverable
     assert "Traceback" not in result.output
 ```
 
@@ -2816,22 +2925,40 @@ def test_the_trail_names_the_lane_and_explains_the_escalation() -> None:
 
     plan = VerificationPlan(["pytest -q"], [], [])
     run = TaskRun(
-        task_id="abc123", branch="orc/x-abc123", run_dir=Path("/tmp"), base="deadbeef",
+        task_id="abc123",
+        branch="orc/x-abc123",
+        run_dir=Path("/tmp"),
+        base="deadbeef",
         attempts=[
-            Attempt(1, "high", AgentResult("ok", "t", None, Path("/tmp"), 1, []),
-                    VerificationResult(False, False, True, "2 failed", plan),
-                    "claude:sonnet@high", "standard", "lazy", 12.5),
-            Attempt(2, "xhigh", AgentResult("ok", "t", None, Path("/tmp"), 4, ["pytest -q"]),
-                    VerificationResult(True, False, True, "34 passed", plan),
-                    "claude:sonnet@xhigh", "standard", None, 41.0),
+            Attempt(
+                1,
+                "high",
+                AgentResult("ok", "t", None, Path("/tmp"), 1, []),
+                VerificationResult(False, False, True, "2 failed", plan),
+                "claude:sonnet@high",
+                "standard",
+                "lazy",
+                12.5,
+            ),
+            Attempt(
+                2,
+                "xhigh",
+                AgentResult("ok", "t", None, Path("/tmp"), 4, ["pytest -q"]),
+                VerificationResult(True, False, True, "34 passed", plan),
+                "claude:sonnet@xhigh",
+                "standard",
+                None,
+                41.0,
+            ),
         ],
-        diff="", blocked=[],
+        diff="",
+        blocked=[],
     )
     output = format_run(run)
 
     assert "standard" in output
     assert "claude:sonnet@high" in output
-    assert "lazy" in output          # the human can see WHY it escalated
+    assert "lazy" in output  # the human can see WHY it escalated
     assert "xhigh" in output
 
 
@@ -2866,7 +2993,9 @@ def main_callback(
     lane: Annotated[str | None, typer.Option(help="Start rung: volume, standard, quality.")] = None,
     agent: Annotated[str | None, typer.Option(help="Force one candidate, as vendor:model.")] = None,
     effort: Annotated[str | None, typer.Option(help="Force the starting effort level.")] = None,
-    use_reserve: Annotated[bool, typer.Option(help="Spend into a pool's reserved headroom.")] = False,
+    use_reserve: Annotated[
+        bool, typer.Option(help="Spend into a pool's reserved headroom.")
+    ] = False,
     allow_destructive: Annotated[bool, typer.Option(help="Allow a denylisted task.")] = False,
 ) -> None:
     """Run a coding agent ladder on TASK, then verify it independently."""
