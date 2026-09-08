@@ -28,10 +28,13 @@ candidates = ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]
 [lanes.quality]
 candidates = ["claude:opus@high", "codex:gpt-5.6-sol@high"]
 
+[agents]
+# A coding run is not a test run. agy's own default for one headless prompt is 5m.
+timeout_s = 900
+
 [ladder]
 order = ["standard", "quality"]
 effort_order = ["low", "medium", "high", "xhigh", "max"]
-retry_count = 2
 max_total_attempts = 4
 
 [triage]

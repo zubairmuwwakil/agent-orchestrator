@@ -27,12 +27,18 @@ class PoolConfig(BaseModel):
 
 class LaneConfig(BaseModel):
     candidates: list[str] = Field(min_length=1)
+    # Optional per-lane override of [agents].timeout_s (e.g. a slower `volume` lane).
+    timeout_s: int | None = Field(default=None, gt=0)
+
+
+class AgentsConfig(BaseModel):
+    # A coding run is not a test run; [verify].timeout_s sizes the latter.
+    timeout_s: int = Field(default=900, gt=0)
 
 
 class LadderConfig(BaseModel):
     order: list[str] = Field(default_factory=lambda: ["standard", "quality"])
     effort_order: list[str] = Field(min_length=1)
-    retry_count: int = Field(default=2, ge=0, le=5)
     max_total_attempts: int = Field(default=4, ge=1)
 
     def next_effort(self, current: str) -> str:
@@ -113,6 +119,7 @@ class OrcConfig(BaseModel):
     pools: dict[str, PoolConfig]
     lanes: dict[str, LaneConfig]
     ladder: LadderConfig
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
     triage: TriageConfig = Field(default_factory=TriageConfig)
     verify: VerifyConfig = Field(default_factory=VerifyConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)

@@ -35,7 +35,7 @@ def _config() -> OrcConfig:
                 "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
             },
             "lanes": {"standard": {"candidates": ["claude:sonnet-5@high"]}},
-            "ladder": {"effort_order": ["low", "medium", "high", "xhigh"], "retry_count": 2},
+            "ladder": {"effort_order": ["low", "medium", "high", "xhigh"]},
         }
     )
 
@@ -149,7 +149,6 @@ def test_rate_limited_result_reroutes_to_other_vendor_and_marks_pool_exhausted(
             "ladder": {
                 "order": ["standard"],
                 "effort_order": ["high", "xhigh"],
-                "retry_count": 2,
                 "max_total_attempts": 3,
             },
         }
@@ -195,7 +194,6 @@ def test_ladder_escalation_on_dumb_triage(tmp_path: Path) -> None:
             "ladder": {
                 "order": ["standard"],
                 "effort_order": ["high", "xhigh"],
-                "retry_count": 2,
                 "max_total_attempts": 4,
             },
         }
@@ -281,6 +279,61 @@ def test_rate_limited_attempt_still_aborts_on_test_tampering(tmp_path: Path) -> 
             TamperingRateLimitedAdapter(),
             verify_runner=lambda _t, _p, _to: verify_ok,
         )
+
+
+def test_agent_timeout_is_independent_of_the_verify_timeout(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    fake = FakeAdapter()
+    config = OrcConfig.model_validate(
+        {
+            "adapters": {"claude": {"command": "claude"}},
+            "pools": {
+                "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
+            },
+            "lanes": {"standard": {"candidates": ["claude:sonnet@high"]}},
+            "ladder": {"effort_order": ["high", "xhigh"]},
+            "agents": {"timeout_s": 900},
+            "verify": {"timeout_s": 120},
+        }
+    )
+    verify_result = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run_task(
+        "do it",
+        tmp_path,
+        config,
+        fake,
+        verify_runner=lambda _t, _p, _to: verify_result,
+    )
+
+    assert fake.requests[0].timeout_s == 900
+
+
+def test_lane_timeout_overrides_the_agents_default(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    fake = FakeAdapter()
+    config = OrcConfig.model_validate(
+        {
+            "adapters": {"claude": {"command": "claude"}},
+            "pools": {
+                "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
+            },
+            "lanes": {"standard": {"candidates": ["claude:sonnet@high"], "timeout_s": 1800}},
+            "ladder": {"order": ["standard"], "effort_order": ["high", "xhigh"]},
+            "agents": {"timeout_s": 900},
+        }
+    )
+    verify_result = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run_task(
+        "do it",
+        tmp_path,
+        config,
+        fake,
+        verify_runner=lambda _t, _p, _to: verify_result,
+    )
+
+    assert fake.requests[0].timeout_s == 1800
 
 
 def test_rescue_output_on_unverified_task() -> None:

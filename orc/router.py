@@ -138,16 +138,16 @@ def run_task(
     ledger = Ledger(target / ".orc" / "ledger.json")
     invoke_verifier = verify_runner or run_verification
 
-    # Collect candidate ladder
-    candidate_list: list[str] = []
-    ladder_order = config.ladder.order if hasattr(config.ladder, "order") else ["standard"]
+    # Collect candidate ladder as (lane, candidate) so a lane's timeout override is known.
+    candidate_list: list[tuple[str, str]] = []
+    ladder_order = config.ladder.order
     for rung in ladder_order:
         if rung in config.lanes:
-            candidate_list.extend(config.lanes[rung].candidates)
+            candidate_list.extend((rung, c) for c in config.lanes[rung].candidates)
     if not candidate_list and "standard" in config.lanes:
-        candidate_list.extend(config.lanes["standard"].candidates)
+        candidate_list.extend(("standard", c) for c in config.lanes["standard"].candidates)
 
-    max_attempts = getattr(config.ladder, "max_total_attempts", config.ladder.retry_count + 2)
+    max_attempts = config.ladder.max_total_attempts
     attempts: list[Attempt] = []
     feedback = ""
     candidate_idx = 0
@@ -155,7 +155,7 @@ def run_task(
     candidate_attempts = 0
 
     while len(attempts) < max_attempts and candidate_idx < len(candidate_list):
-        candidate_str = candidate_list[candidate_idx]
+        lane_name, candidate_str = candidate_list[candidate_idx]
         vendor, model, base_effort = parse_candidate(candidate_str)
         pool_id = resolve_pool_id(vendor, config)
         pool_cfg = config.pools.get(pool_id)
@@ -176,6 +176,9 @@ def run_task(
         effort = current_effort or base_effort
         attempt_number = len(attempts) + 1
 
+        lane_cfg = config.lanes.get(lane_name)
+        agent_timeout = (lane_cfg.timeout_s if lane_cfg else None) or config.agents.timeout_s
+
         prompt = _agent_prompt(task, feedback)
         prompt_path = run_dir / f"prompt-{attempt_number}.txt"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -190,7 +193,7 @@ def run_task(
                 model=model,
                 effort=effort,
                 cwd=target,
-                timeout_s=config.verify.timeout_s,
+                timeout_s=agent_timeout,
                 transcript_path=run_dir / f"attempt-{attempt_number}-transcript.txt",
             )
         )
