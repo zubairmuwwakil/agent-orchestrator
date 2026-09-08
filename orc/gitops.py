@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
+import os
 import re
 import secrets
+import shutil
 import subprocess
-from pathlib import Path
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
 
 
 class SafetyError(RuntimeError):
@@ -18,9 +24,38 @@ _DESTRUCTIVE_PATTERNS = (r"\brm\s+-rf\b", r"\bdrop\s+table\b", r"\bschema\s+migr
 _EXCLUDE_ENTRY = ".orc/"
 _EXCLUDE_HEADER = "# added by orc: run artifacts, never committed"
 
+# Dependency and cache trees an agent may legitimately churn. Test-file enumeration
+# prunes these by name so `git ls-files` can run ignore-unaware — an agent-authored
+# `.gitignore` must not be able to blind the tamper guard. Kept in sync with
+# `SafetyConfig.skip_dirs` (a test asserts equality); `orc.toml` overrides the config.
+_DEFAULT_SKIP_DIRS: tuple[str, ...] = (
+    ".git",
+    ".orc",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".tox",
+    ".nox",
+    "site-packages",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".eggs",
+    "dist",
+    "build",
+    "target",
+    "vendor",
+)
 
-def _git(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=target, capture_output=True, text=True, check=False)
+
+def _git(
+    target: Path, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    run_env = {**os.environ, **env} if env else None
+    return subprocess.run(
+        ["git", *args], cwd=target, capture_output=True, text=True, check=False, env=run_env
+    )
 
 
 def git_dir(target: Path) -> Path:
@@ -114,33 +149,131 @@ def new_task_id() -> str:
     return secrets.token_hex(3)
 
 
-def git_diff(target: Path) -> str:
-    """Return the working-tree diff from git, never agent output."""
-    diff = _git(target, "diff", "--no-ext-diff")
+def base_commit(target: Path) -> str:
+    """Record HEAD at branch creation so the whole run's work can be diffed later."""
+    resolved = _git(target, "rev-parse", "HEAD")
+    if resolved.returncode != 0:
+        raise SafetyError("could not resolve HEAD; the target repository has no commits")
+    return resolved.stdout.strip()
+
+
+@contextmanager
+def _throwaway_index(target: Path) -> Iterator[dict[str, str]]:
+    """Yield a git env whose index is a scratch copy of the real one.
+
+    ``git_diff`` marks new files intent-to-add so they show in the diff. Doing that on
+    the real index leaves ``A `` entries behind, which the next run's cleanliness check
+    reads as a dirty tree — the very failure Task 4 removed. A throwaway index keeps the
+    diff a pure read.
+    """
+    resolved = _git(target, "rev-parse", "--git-path", "index")
+    real_index = Path(resolved.stdout.strip())
+    if not real_index.is_absolute():
+        real_index = target / real_index
+    handle, scratch = tempfile.mkstemp(prefix="orc-diff-index-")
+    os.close(handle)
+    try:
+        if real_index.is_file():
+            shutil.copyfile(real_index, scratch)
+        else:
+            os.unlink(scratch)  # let git create it fresh
+        yield {"GIT_INDEX_FILE": scratch}
+    finally:
+        Path(scratch).unlink(missing_ok=True)
+
+
+def _intent_to_add_run_work(target: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Intent-to-add everything a run diff should show: tracked changes, untracked files,
+    and untracked files the target already *gitignores* (an agent's fix can land in a
+    path like ``instance/config.py``). Never ``.orc/`` artifacts, and never a dependency
+    or build tree from the skip-dir denylist — those churn and would swamp the diff.
+    """
+    added = _git(target, "add", "--intent-to-add", "--all", env=env)
+    if added.returncode != 0:
+        return added
+    ignored = _git(
+        target, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", env=env
+    )
+    if ignored.returncode != 0:
+        return added
+    skip = set(_DEFAULT_SKIP_DIRS)
+    paths = [
+        p
+        for p in ignored.stdout.split("\0")
+        if p
+        and not p.startswith(_EXCLUDE_ENTRY)
+        and not skip.intersection(PurePosixPath(p).parts)
+    ]
+    if paths:
+        return _git(target, "add", "--intent-to-add", "--force", "--", *paths, env=env)
+    return added
+
+
+def git_diff(target: Path, base: str) -> str:
+    """Diff the working tree against the run's base commit.
+
+    `git diff` alone shows only unstaged tracked changes, so work an agent committed or
+    staged is invisible. Intent-to-add (in a throwaway index) makes new files visible
+    without staging content; `.orc/` and dependency trees are excluded, so they never
+    appear.
+    """
+    with _throwaway_index(target) as env:
+        staged = _intent_to_add_run_work(target, env)
+        if staged.returncode != 0:
+            raise SafetyError(staged.stderr.strip() or "could not stage new files for diff")
+        diff = _git(target, "diff", "--no-ext-diff", base, env=env)
     if diff.returncode != 0:
         raise SafetyError(diff.stderr.strip() or "could not collect git diff")
     return diff.stdout
 
 
-def git_diff_stat(target: Path) -> str:
-    """Return diff stat summary from git."""
-    stat = _git(target, "diff", "--stat")
+def git_diff_stat(target: Path, base: str) -> str:
+    """Return the diff stat against the run's base commit."""
+    with _throwaway_index(target) as env:
+        if _intent_to_add_run_work(target, env).returncode != 0:
+            return ""
+        stat = _git(target, "diff", "--stat", base, env=env)
     return stat.stdout.strip() if stat.returncode == 0 else ""
 
 
-def test_file_snapshot(target: Path) -> dict[Path, str]:
-    """Hash test files so an M1 run cannot accept a test-altering patch."""
-    snapshot: dict[Path, str] = {}
-    for path in target.rglob("*.py"):
-        relative = path.relative_to(target)
-        name = path.name
-        if "tests" in relative.parts or name.startswith("test_") or name.endswith("_test.py"):
+def test_file_snapshot(
+    target: Path, patterns: list[str], skip_dirs: list[str] | None = None
+) -> dict[str, str]:
+    """Hash test files so a test-altering patch can be refused.
+
+    Enumerated with ``git ls-files`` (tracked *and* untracked), never a filesystem walk.
+    It runs **ignore-unaware** on purpose: an agent controls ``.gitignore``, so relying
+    on git's ignore lens lets a self-ignoring ``tests/.gitignore`` (``*``) hide a new
+    ``conftest.py``. Dependency and cache trees are pruned by a fixed name denylist
+    instead, so a legitimate ``npm install`` still does not bloat the snapshot or trip
+    the abort. ``.gitignore`` files are themselves in the watched pattern set.
+    """
+    skip = set(skip_dirs) if skip_dirs is not None else set(_DEFAULT_SKIP_DIRS)
+    listed = _git(target, "ls-files", "-z", "--cached", "--others")
+    if listed.returncode != 0:
+        raise SafetyError("could not list tracked files")
+    snapshot: dict[str, str] = {}
+    for relative in listed.stdout.split("\0"):
+        if not relative:
+            continue
+        if skip.intersection(PurePosixPath(relative).parts):
+            continue
+        if not any(fnmatch.fnmatch(relative, pattern) for pattern in patterns):
+            continue
+        path = target / relative
+        if path.is_file():
             snapshot[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return snapshot
 
 
-def assert_tests_unchanged(target: Path, before: dict[Path, str]) -> None:
-    """Fail closed if an agent changed, added, or removed any Python test file."""
-    after = test_file_snapshot(target)
+# The name starts with `test_`; tell pytest it is not a test when a test module imports it.
+test_file_snapshot.__test__ = False  # type: ignore[attr-defined]
+
+
+def assert_tests_unchanged(
+    target: Path, before: dict[str, str], patterns: list[str], skip_dirs: list[str] | None = None
+) -> None:
+    """Fail closed if an agent changed, added, or removed any watched test file."""
+    after = test_file_snapshot(target, patterns, skip_dirs)
     if after != before:
         raise SafetyError("agent changed test files; refusing to accept a test-altering patch")

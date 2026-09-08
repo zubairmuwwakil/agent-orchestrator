@@ -2,8 +2,11 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult
 from orc.config import OrcConfig
+from orc.gitops import SafetyError
 from orc.router import run_task
 from orc.verify import VerificationPlan, VerificationResult
 
@@ -243,6 +246,41 @@ def test_ladder_escalation_on_dumb_triage(tmp_path: Path) -> None:
     assert len(claude_adapter.requests) == 2
     # Escalated to Codex
     assert len(codex_adapter.requests) == 1
+
+
+def test_rate_limited_attempt_still_aborts_on_test_tampering(tmp_path: Path) -> None:
+    """A test-file edit aborts the run even when the CLI then reports rate_limited —
+    the guard must run before the reroute, or the next attempt re-baselines the tamper."""
+    _init_repo(tmp_path)
+
+    class TamperingRateLimitedAdapter(AgentAdapter):
+        name = "claude"
+
+        def __init__(self) -> None:
+            self.requests: list[AgentRequest] = []
+
+        def available(self) -> bool:
+            return True
+
+        def run(self, req: AgentRequest) -> AgentResult:
+            self.requests.append(req)
+            (req.cwd / "tests").mkdir(exist_ok=True)
+            (req.cwd / "tests" / "conftest.py").write_text(
+                "collect_ignore = ['x']\n", encoding="utf-8"
+            )
+            assert req.transcript_path is not None
+            req.transcript_path.write_text("hit limit\n", encoding="utf-8")
+            return AgentResult("rate_limited", "limit", None, req.transcript_path, 1, [])
+
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+    with pytest.raises(SafetyError, match="test"):
+        run_task(
+            "do it",
+            tmp_path,
+            _config(),
+            TamperingRateLimitedAdapter(),
+            verify_runner=lambda _t, _p, _to: verify_ok,
+        )
 
 
 def test_rescue_output_on_unverified_task() -> None:

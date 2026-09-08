@@ -13,6 +13,7 @@ from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult
 from orc.config import OrcConfig
 from orc.gitops import (
     assert_tests_unchanged,
+    base_commit,
     create_branch,
     git_diff,
     git_diff_stat,
@@ -130,6 +131,7 @@ def run_task(
 
     task_id = new_task_id()
     branch = create_branch(target, task, task_id)
+    base = base_commit(target)
     run_dir = target / ".orc" / "runs" / task_id
     run_dir.mkdir(parents=True, exist_ok=True)
     plan = detect_commands(target, config.verify)
@@ -177,7 +179,9 @@ def run_task(
         prompt = _agent_prompt(task, feedback)
         prompt_path = run_dir / f"prompt-{attempt_number}.txt"
         prompt_path.write_text(prompt, encoding="utf-8")
-        test_snapshot = test_file_snapshot(target)
+        test_snapshot = test_file_snapshot(
+            target, config.safety.test_path_patterns, config.safety.skip_dirs
+        )
 
         result = ad.run(
             AgentRequest(
@@ -194,6 +198,12 @@ def run_task(
         if pool_cfg:
             ledger.record_run(pool_id, pool_cfg)
 
+        # Before anything else the attempt's output feeds — a test-file edit aborts the
+        # run regardless of status, so a rate_limited reroute cannot re-baseline a tamper.
+        assert_tests_unchanged(
+            target, test_snapshot, config.safety.test_path_patterns, config.safety.skip_dirs
+        )
+
         if result.status == "rate_limited":
             if pool_cfg:
                 ledger.mark_exhausted(pool_id, pool_cfg)
@@ -202,7 +212,6 @@ def run_task(
             candidate_attempts = 0
             continue
 
-        assert_tests_unchanged(target, test_snapshot)
         verification = invoke_verifier(target, plan, config.verify.timeout_s)
         (run_dir / f"verify-{attempt_number}.txt").write_text(verification.output, encoding="utf-8")
         attempts.append(Attempt(attempt_number, effort, result, verification, candidate_str))
@@ -212,7 +221,7 @@ def run_task(
 
         # Verification failed -> triage
         candidate_attempts += 1
-        diff_exists = bool(git_diff(target))
+        diff_exists = bool(git_diff(target, base))
         triage = triage_failure(
             result,
             verification,
@@ -220,7 +229,7 @@ def run_task(
             verify_attempts=candidate_attempts,
             min_tool_calls=config.triage.min_tool_calls,
         )
-        feedback = _feedback(verification, result, target)
+        feedback = _feedback(verification, result, target, base)
 
         if triage == "lazy":
             if not config.ladder.is_max_effort(effort):
@@ -234,7 +243,7 @@ def run_task(
             current_effort = None
             candidate_attempts = 0
 
-    task_run = TaskRun(task_id, branch, run_dir, attempts, git_diff(target))
+    task_run = TaskRun(task_id, branch, run_dir, attempts, git_diff(target, base))
     _log_task_run(target, task, task_run)
     return task_run
 
@@ -249,8 +258,10 @@ def _agent_prompt(task: str, feedback: str) -> str:
     )
 
 
-def _feedback(verification: VerificationResult, result: AgentResult, target: Path) -> str:
-    diff_stat = git_diff_stat(target)
+def _feedback(
+    verification: VerificationResult, result: AgentResult, target: Path, base: str
+) -> str:
+    diff_stat = git_diff_stat(target, base)
     details = verification.output[-6000:] or result.text[-2000:]
     parts = [
         "\n\nThe previous attempt did not pass independent verification.",

@@ -62,6 +62,52 @@ class VerifyConfig(BaseModel):
     build: list[str] = Field(default_factory=list)
 
 
+class SafetyConfig(BaseModel):
+    # Match against paths from `git ls-files`. `tests/**` matches any path under `tests/`.
+    test_path_patterns: list[str] = Field(
+        default_factory=lambda: [
+            "tests/**",
+            "test/**",
+            "spec/**",
+            "conftest.py",
+            "**/conftest.py",
+            ".gitignore",
+            "**/.gitignore",
+            "test_*.py",
+            "*_test.py",
+            "*_test.go",
+            "*.test.ts",
+            "*.test.js",
+            "*.spec.ts",
+            "src/test/**",
+        ]
+    )
+    # Directory names never scanned for test files: dependency and build trees an agent
+    # may legitimately churn. A fixed denylist, not attacker-controllable ignore rules.
+    # Mirrors orc.gitops._DEFAULT_SKIP_DIRS (a test asserts the two stay in sync).
+    skip_dirs: list[str] = Field(
+        default_factory=lambda: [
+            ".git",
+            ".orc",
+            "node_modules",
+            ".venv",
+            "venv",
+            ".tox",
+            ".nox",
+            "site-packages",
+            "__pycache__",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".eggs",
+            "dist",
+            "build",
+            "target",
+            "vendor",
+        ]
+    )
+
+
 class OrcConfig(BaseModel):
     adapters: dict[str, AdapterConfig]
     pools: dict[str, PoolConfig]
@@ -69,6 +115,7 @@ class OrcConfig(BaseModel):
     ladder: LadderConfig
     triage: TriageConfig = Field(default_factory=TriageConfig)
     verify: VerifyConfig = Field(default_factory=VerifyConfig)
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
 
 
 def find_config(target: Path) -> Path:
