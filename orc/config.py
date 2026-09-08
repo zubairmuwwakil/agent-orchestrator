@@ -17,6 +17,7 @@ class AdapterConfig(BaseModel):
     command: str
     pool: str | None = None
     rate_limit_patterns: list[str] = Field(default_factory=list)
+    supported_efforts: list[str] = Field(default_factory=list)
 
 
 class PoolConfig(BaseModel):
