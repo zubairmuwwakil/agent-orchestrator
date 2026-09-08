@@ -20,9 +20,12 @@ class AdapterConfig(BaseModel):
 
 
 class PoolConfig(BaseModel):
-    window: Literal["5h", "weekly", "monthly"]
-    budget_units: float
-    flat_run_estimate: float
+    # A pool has several simultaneous windows: codex reports a 5h and a weekly one.
+    windows: list[Literal["5h", "weekly", "monthly"]] = Field(min_length=1)
+    budget_units: float  # fallback only, used when no telemetry is available
+    flat_run_estimate: float  # fallback only
+    reserve_fraction: float = Field(default=0.15, ge=0.0, lt=1.0)
+    quota_group: str | None = None  # vendor-side group name, when one CLI serves two pools
 
 
 class LaneConfig(BaseModel):

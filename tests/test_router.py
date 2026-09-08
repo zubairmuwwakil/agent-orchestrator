@@ -32,7 +32,7 @@ def _config() -> OrcConfig:
         {
             "adapters": {"claude": {"command": "claude"}},
             "pools": {
-                "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
+                "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
             },
             "lanes": {"standard": {"candidates": ["claude:sonnet-5@high"]}},
             "ladder": {"effort_order": ["low", "medium", "high", "xhigh"]},
@@ -140,8 +140,8 @@ def test_rate_limited_result_reroutes_to_other_vendor_and_marks_pool_exhausted(
                 "codex": {"command": "codex", "pool": "codex"},
             },
             "pools": {
-                "claude": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
-                "codex": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
+                "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
+                "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
             },
             "lanes": {
                 "standard": {"candidates": ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]}
@@ -185,8 +185,8 @@ def test_ladder_escalation_on_dumb_triage(tmp_path: Path) -> None:
                 "codex": {"command": "codex", "pool": "codex"},
             },
             "pools": {
-                "claude": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
-                "codex": {"window": "weekly", "budget_units": 10, "flat_run_estimate": 1},
+                "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
+                "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
             },
             "lanes": {
                 "standard": {"candidates": ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]}
@@ -288,7 +288,7 @@ def test_agent_timeout_is_independent_of_the_verify_timeout(tmp_path: Path) -> N
         {
             "adapters": {"claude": {"command": "claude"}},
             "pools": {
-                "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
+                "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
             },
             "lanes": {"standard": {"candidates": ["claude:sonnet@high"]}},
             "ladder": {"effort_order": ["high", "xhigh"]},
@@ -316,7 +316,7 @@ def test_lane_timeout_overrides_the_agents_default(tmp_path: Path) -> None:
         {
             "adapters": {"claude": {"command": "claude"}},
             "pools": {
-                "claude": {"window": "weekly", "budget_units": 5, "flat_run_estimate": 1}
+                "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
             },
             "lanes": {"standard": {"candidates": ["claude:sonnet@high"], "timeout_s": 1800}},
             "ladder": {"order": ["standard"], "effort_order": ["high", "xhigh"]},

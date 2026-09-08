@@ -11,14 +11,17 @@ pool = "codex"
 rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit", "too many requests", "429"]
 
 [pools.claude]
-window = "weekly"
+# codex/claude both expose a short and a long window; a pool tracks all of them.
+windows = ["5h", "weekly"]
 budget_units = 20
 flat_run_estimate = 1
+reserve_fraction = 0.15
 
 [pools.codex]
-window = "weekly"
+windows = ["5h", "weekly"]
 budget_units = 30
 flat_run_estimate = 1
+reserve_fraction = 0.15
 
 [lanes.standard]
 # `claude --help` confirms the CLI accepts the `sonnet` alias.
