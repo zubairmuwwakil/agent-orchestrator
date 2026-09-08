@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -125,6 +126,7 @@ def run_task(
     """Run coding agent ladder on task in target, verifying and triaging each attempt."""
     from orc.gitops import ensure_safe_target
 
+    task_started = time.monotonic()
     ensure_safe_target(target, task, allow_destructive)
 
     # Normalize adapters
@@ -300,7 +302,8 @@ def run_task(
             candidate_attempts = 0
 
     task_run = TaskRun(task_id, branch, run_dir, attempts, git_diff(target, base), blocked)
-    _log_task_run(target, task, task_run)
+    start_lane = candidate_list[0][0] if candidate_list else ""
+    _log_task_run(target, task, task_run, start_lane, time.monotonic() - task_started)
     return task_run
 
 
@@ -354,25 +357,70 @@ def _feedback(
     return "\n".join(parts) + "\n"
 
 
-def _log_task_run(target: Path, task: str, task_run: TaskRun) -> None:
-    """Record task run entry into .orc/log.jsonl per SPEC §13."""
+def _usage_summary(task_run: TaskRun) -> dict[str, int]:
+    """Count attempted runs by vendor without recording any prompt-derived data."""
+    usage: dict[str, int] = {}
+    for attempt in task_run.attempts:
+        vendor = parse_candidate(attempt.candidate)[0] if attempt.candidate else "unknown"
+        usage[vendor] = usage.get(vendor, 0) + 1
+    return usage
+
+
+def _observed_quota(task_run: TaskRun) -> list[dict[str, object]]:
+    """Flatten per-attempt telemetry for the learned-routing log.
+
+    An adapter observation is tied to its vendor's configured pool by the router;
+    the candidate vendor is therefore the only stable identifier available here.
+    """
+    observations: list[dict[str, object]] = []
+    for attempt in task_run.attempts:
+        if attempt.result.quota is None:
+            continue
+        pool = parse_candidate(attempt.candidate)[0] if attempt.candidate else "unknown"
+        for window in attempt.result.quota.windows:
+            observations.append(
+                {
+                    "pool": pool,
+                    "window": window.kind,
+                    "used_fraction": window.used_fraction,
+                    "source": attempt.result.quota.source,
+                }
+            )
+    return observations
+
+
+def _log_task_run(
+    target: Path, task: str, task_run: TaskRun, start_lane: str, wall_s: float
+) -> None:
+    """Append one privacy-preserving task record per SPEC §13.
+
+    Prompts belong only in the run artifact directory. The JSONL is intentionally
+    safe to use as aggregate routing data, so it carries a digest rather than text.
+    """
     log_file = target / ".orc" / "log.jsonl"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     entry: dict[str, Any] = {
         "task_id": task_run.task_id,
-        "task": task,
-        "branch": task_run.branch,
+        "prompt_hash": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+        "start_lane": start_lane,
         "attempts": [
             {
-                "attempt": a.number,
-                "candidate": a.candidate,
+                "vendor": parse_candidate(a.candidate)[0] if a.candidate else "",
+                "model": parse_candidate(a.candidate)[1] if a.candidate else "",
                 "effort": a.effort,
-                "status": a.result.status,
-                "verified": a.verification.ok,
+                "lane": a.lane,
+                "triage": a.triage,
+                "verify": a.verification.ok,
+                "wall_s": round(a.wall_s, 2),
             }
             for a in task_run.attempts
         ],
+        "reviewer": None,
+        "findings": {"p0": 0, "p1": 0, "p2": 0, "p3": 0},
         "outcome": "verified" if task_run.verified else "failed",
+        "wall_s": round(wall_s, 2),
+        "est_usage": _usage_summary(task_run),
+        "quota": _observed_quota(task_run),
         "timestamp": datetime.now(UTC).isoformat(),
     }
     with log_file.open("a", encoding="utf-8") as f:
