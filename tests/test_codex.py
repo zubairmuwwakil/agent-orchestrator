@@ -195,6 +195,57 @@ def test_codex_run_detects_rate_limit(tmp_path: Path) -> None:
     assert result.status == "rate_limited"
 
 
+def test_a_task_about_rate_limiting_does_not_exhaust_the_pool(tmp_path: Path) -> None:
+    """D11: an agent's successful prose must not trigger a substring match."""
+    adapter = CodexAdapter(_codex_config())
+    stdout = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "i0",
+                "type": "agent_message",
+                "text": "I added a rate limit to the login endpoint.",
+            },
+        }
+    )
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(["codex"], 0, stdout=stdout, stderr="")
+    )
+    req = AgentRequest(
+        prompt="add rate limiting",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
+    )
+    with patch("subprocess.run", mock_run):
+        result = adapter.run(req)
+
+    assert result.status == "ok"
+
+
+def test_a_real_rate_limit_on_stderr_is_still_detected(tmp_path: Path) -> None:
+    adapter = CodexAdapter(_codex_config())
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            ["codex"], 1, stdout="", stderr="Error: you have exceeded your rate limit."
+        )
+    )
+    req = AgentRequest(
+        prompt="do it",
+        mode="agent",
+        model="gpt-5.6-terra",
+        effort="high",
+        cwd=tmp_path,
+        timeout_s=30,
+        transcript_path=tmp_path / "t.txt",
+    )
+    with patch("subprocess.run", mock_run):
+        assert adapter.run(req).status == "rate_limited"
+
+
 def test_codex_run_handles_timeout(tmp_path: Path) -> None:
     adapter = CodexAdapter(_codex_config())
     mock_run = MagicMock(

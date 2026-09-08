@@ -90,14 +90,14 @@ class ClaudeCodeAdapter(AgentAdapter):
         if completed.stderr:
             raw_transcript += f"\n--- stderr ---\n{completed.stderr}"
         transcript_path.write_text(raw_transcript, encoding="utf-8")
-        combined_output = raw_transcript.casefold()
-        status: AgentStatus = "ok" if completed.returncode == 0 else "fail"
-        if any(pattern in combined_output for pattern in self._rate_limit_patterns):
-            status = "rate_limited"
-
         parsed = _parse_stream(completed.stdout)
+        status: AgentStatus = "ok" if completed.returncode == 0 else "fail"
         if parsed.is_error:
             status = "fail"
+        if _is_rate_limited(
+            completed.stderr, parsed.text, completed.returncode, self._rate_limit_patterns
+        ):
+            status = "rate_limited"
         quota = (
             _observation_from_rate_limit(parsed.rate_limit_info)
             if parsed.rate_limit_info
@@ -230,3 +230,12 @@ def _as_text(value: str | bytes | None) -> str:
     if value is None:
         return ""
     return value.decode(errors="replace") if isinstance(value, bytes) else value
+
+
+def _is_rate_limited(
+    stderr: str, agent_text: str, returncode: int, patterns: tuple[str, ...]
+) -> bool:
+    """Treat stderr as authoritative; inspect agent prose only after a failed run."""
+    if any(pattern in stderr.casefold() for pattern in patterns):
+        return True
+    return returncode != 0 and any(pattern in agent_text.casefold() for pattern in patterns)

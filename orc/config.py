@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -141,13 +142,33 @@ class OrcConfig(BaseModel):
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
 
 
+def user_config_path() -> Path:
+    """Return the per-user config location for targets outside an orc tree."""
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "orc" / "orc.toml"
+
+
 def find_config(target: Path) -> Path:
-    """Find the nearest orc.toml at or above a target repository."""
+    """Resolve config from ORC_CONFIG, the target tree, then the user config."""
+    explicit = os.environ.get("ORC_CONFIG")
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        if candidate.is_file():
+            return candidate
+        raise ConfigError(f"ORC_CONFIG points at a missing file: {candidate}")
+
     for directory in (target, *target.parents):
         candidate = directory / "orc.toml"
         if candidate.is_file():
             return candidate
-    raise ConfigError(f"no orc.toml found at or above {target}")
+
+    fallback = user_config_path()
+    if fallback.is_file():
+        return fallback
+    raise ConfigError(
+        f"no orc.toml found at or above {target}, and none at {fallback}. "
+        f"Create {fallback}, or set ORC_CONFIG to a config file."
+    )
 
 
 def load_config(path: Path) -> OrcConfig:
