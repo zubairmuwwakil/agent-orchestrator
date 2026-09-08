@@ -1,12 +1,14 @@
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult
+from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult, QuotaObservation, QuotaWindow
 from orc.config import OrcConfig
 from orc.gitops import SafetyError
+from orc.ledger import Ledger
 from orc.router import run_task
 from orc.verify import VerificationPlan, VerificationResult
 
@@ -357,3 +359,272 @@ def test_rescue_output_on_unverified_task() -> None:
     output = format_run(run)
     assert "⚠ Task did not pass independent verification." in output
     assert "git switch orc/test-abc123" in output
+
+
+def _two_vendor_config(**overrides: object) -> OrcConfig:
+    base: dict[str, object] = {
+        "adapters": {
+            "claude": {"command": "claude", "pool": "claude"},
+            "codex": {"command": "codex", "pool": "codex"},
+            "antigravity": {"command": "agy", "pool": "antigravity_gemini"},
+        },
+        "pools": {
+            "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
+            "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
+            "antigravity_gemini": {
+                "windows": ["weekly"], "budget_units": 50, "flat_run_estimate": 1
+            },
+        },
+        "lanes": {
+            "standard": {"candidates": ["claude:sonnet@high"]},
+            "quality": {"candidates": ["codex:gpt-5.6-sol@high"]},
+            "volume": {"candidates": ["antigravity:gemini-3.8-flash-medium@medium"]},
+        },
+        "ladder": {
+            "order": ["standard", "quality"],
+            "fallback": "volume",
+            "effort_order": ["high", "xhigh"],
+            "max_total_attempts": 4,
+        },
+    }
+    base.update(overrides)
+    return OrcConfig.model_validate(base)
+
+
+def test_a_reserve_blocked_pool_is_skipped_before_a_run_is_spent(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    config = _two_vendor_config()
+    ledger = Ledger(tmp_path / ".orc" / "ledger.json")
+    later = datetime.now(UTC) + timedelta(days=1)
+    ledger.record_observation(
+        "claude",
+        QuotaObservation([QuotaWindow("weekly", 0.92, later)], datetime.now(UTC), "stream"),
+    )
+
+    claude_adapter = ReroutingFakeAdapter("claude")
+    codex_adapter = ReroutingFakeAdapter("codex")
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run = run_task(
+        "do it",
+        tmp_path,
+        config,
+        adapters={"claude": claude_adapter, "codex": codex_adapter},
+        verify_runner=lambda _t, _p, _to: verify_ok,
+    )
+
+    assert run.verified
+    assert claude_adapter.requests == []  # never spent
+    assert len(codex_adapter.requests) == 1
+
+
+def test_every_rung_blocked_degrades_to_the_volume_lane(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    config = _two_vendor_config()
+    ledger = Ledger(tmp_path / ".orc" / "ledger.json")
+    later = datetime.now(UTC) + timedelta(days=1)
+    for pool in ("claude", "codex"):
+        ledger.record_observation(
+            pool,
+            QuotaObservation([QuotaWindow("weekly", 0.95, later)], datetime.now(UTC), "stream"),
+        )
+
+    agy_adapter = ReroutingFakeAdapter("antigravity")
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run = run_task(
+        "do it",
+        tmp_path,
+        config,
+        adapters={
+            "claude": ReroutingFakeAdapter("claude"),
+            "codex": ReroutingFakeAdapter("codex"),
+            "antigravity": agy_adapter,
+        },
+        verify_runner=lambda _t, _p, _to: verify_ok,
+    )
+
+    assert len(agy_adapter.requests) == 1
+    assert run.verified
+
+
+def test_use_reserve_spends_a_blocked_pool(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    config = _two_vendor_config()
+    ledger = Ledger(tmp_path / ".orc" / "ledger.json")
+    later = datetime.now(UTC) + timedelta(days=1)
+    ledger.record_observation(
+        "claude",
+        QuotaObservation([QuotaWindow("weekly", 0.92, later)], datetime.now(UTC), "stream"),
+    )
+    claude_adapter = ReroutingFakeAdapter("claude")
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run_task(
+        "do it",
+        tmp_path,
+        config,
+        adapters={"claude": claude_adapter, "codex": ReroutingFakeAdapter("codex")},
+        verify_runner=lambda _t, _p, _to: verify_ok,
+        use_reserve=True,
+    )
+
+    assert len(claude_adapter.requests) == 1
+
+
+def test_the_run_records_why_it_escalated(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    config = _two_vendor_config()
+    plan = VerificationPlan(["pytest -q"], [], [])
+    results = iter(
+        [
+            VerificationResult(False, False, True, "failed", plan),
+            VerificationResult(True, False, True, "passed", plan),
+        ]
+    )
+    run = run_task(
+        "do it",
+        tmp_path,
+        config,
+        adapters={
+            "claude": ReroutingFakeAdapter("claude"),
+            "codex": ReroutingFakeAdapter("codex"),
+        },
+        verify_runner=lambda _t, _p, _to: next(results),
+    )
+
+    assert run.attempts[0].triage in {"lazy", "dumb"}
+    assert run.attempts[0].wall_s >= 0.0
+    assert run.attempts[-1].triage is None  # the successful attempt was not triaged
+
+
+def test_volume_is_not_entered_when_a_rung_was_merely_unavailable(tmp_path: Path) -> None:
+    """SPEC §6: volume is reached only when *every* ladder candidate is reserve-blocked.
+    An unavailable adapter is not reserve-blocked, so exhaustion here is an honest failure."""
+    _init_repo(tmp_path)
+    config = _two_vendor_config()
+    ledger = Ledger(tmp_path / ".orc" / "ledger.json")
+    later = datetime.now(UTC) + timedelta(days=1)
+    ledger.record_observation(
+        "claude",
+        QuotaObservation([QuotaWindow("weekly", 0.95, later)], datetime.now(UTC), "stream"),
+    )
+
+    agy_adapter = ReroutingFakeAdapter("antigravity")
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run = run_task(
+        "do it",
+        tmp_path,
+        config,
+        adapters={"claude": ReroutingFakeAdapter("claude"), "antigravity": agy_adapter},
+        verify_runner=lambda _t, _p, _to: verify_ok,
+    )
+
+    assert agy_adapter.requests == []  # codex was unavailable, not reserve-blocked
+    assert not run.verified
+
+
+def test_volume_is_not_entered_after_a_run_was_already_spent(tmp_path: Path) -> None:
+    """A rate_limited run appends no Attempt but is still a spend; the volume fallback
+    is for pre-flight exhaustion only, so it must be off the table once anything ran."""
+    _init_repo(tmp_path)
+    config = _two_vendor_config()
+    ledger = Ledger(tmp_path / ".orc" / "ledger.json")
+    later = datetime.now(UTC) + timedelta(days=1)
+    ledger.record_observation(
+        "codex",
+        QuotaObservation([QuotaWindow("weekly", 0.95, later)], datetime.now(UTC), "stream"),
+    )
+
+    claude_adapter = ReroutingFakeAdapter("claude", status="rate_limited")
+    agy_adapter = ReroutingFakeAdapter("antigravity")
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run = run_task(
+        "do it",
+        tmp_path,
+        config,
+        adapters={
+            "claude": claude_adapter,
+            "codex": ReroutingFakeAdapter("codex"),
+            "antigravity": agy_adapter,
+        },
+        verify_runner=lambda _t, _p, _to: verify_ok,
+    )
+
+    assert len(claude_adapter.requests) == 1  # a run was spent
+    assert agy_adapter.requests == []  # ...so volume is not entered
+    assert not run.verified
+
+
+def test_a_rate_limited_run_counts_against_the_attempt_cap(tmp_path: Path) -> None:
+    """SPEC §6 hard stop: a rate_limited run appends no Attempt but is still a spend, so
+    it must count toward max_total_attempts — otherwise every eligible pool can be hit."""
+    _init_repo(tmp_path)
+    config = OrcConfig.model_validate(
+        {
+            "adapters": {
+                "claude": {"command": "claude", "pool": "claude"},
+                "codex": {"command": "codex", "pool": "codex"},
+                "antigravity": {"command": "agy", "pool": "antigravity_gemini"},
+            },
+            "pools": {
+                "claude": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
+                "codex": {"windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1},
+                "antigravity_gemini": {
+                    "windows": ["weekly"], "budget_units": 10, "flat_run_estimate": 1
+                },
+            },
+            "lanes": {
+                "standard": {
+                    "candidates": [
+                        "claude:sonnet@high",
+                        "codex:gpt-5.6-terra@high",
+                        "antigravity:gemini-3.8-flash-high@high",
+                    ]
+                }
+            },
+            "ladder": {
+                "order": ["standard"],
+                "effort_order": ["high", "xhigh"],
+                "max_total_attempts": 2,
+            },
+        }
+    )
+    adapters = {
+        "claude": ReroutingFakeAdapter("claude", status="rate_limited"),
+        "codex": ReroutingFakeAdapter("codex", status="rate_limited"),
+        "antigravity": ReroutingFakeAdapter("antigravity", status="rate_limited"),
+    }
+    verify_ok = VerificationResult(True, False, True, "ok", VerificationPlan([], [], []))
+
+    run = run_task(
+        "do it", tmp_path, config, adapters=adapters,
+        verify_runner=lambda _t, _p, _to: verify_ok,
+    )
+
+    spent = sum(len(a.requests) for a in adapters.values())
+    assert spent == 2  # not 3 — the cap holds even though no Attempt was recorded
+    assert not run.verified
+
+
+def test_a_lane_cannot_be_both_a_rung_and_the_fallback() -> None:
+    with pytest.raises(ValueError, match="fallback"):
+        OrcConfig.model_validate(
+            {
+                "adapters": {"claude": {"command": "claude"}},
+                "pools": {
+                    "claude": {"windows": ["weekly"], "budget_units": 5, "flat_run_estimate": 1}
+                },
+                "lanes": {
+                    "standard": {"candidates": ["claude:sonnet@high"]},
+                    "volume": {"candidates": ["claude:haiku@low"]},
+                },
+                "ladder": {
+                    "order": ["volume", "standard"],
+                    "fallback": "volume",
+                    "effort_order": ["low", "high"],
+                },
+            }
+        )

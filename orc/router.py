@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -20,7 +21,7 @@ from orc.gitops import (
     new_task_id,
     test_file_snapshot,
 )
-from orc.ledger import Ledger
+from orc.ledger import Eligibility, Ledger
 from orc.verify import VerificationPlan, VerificationResult, detect_commands, run_verification
 
 
@@ -31,6 +32,9 @@ class Attempt:
     result: AgentResult
     verification: VerificationResult
     candidate: str = ""
+    lane: str = ""
+    triage: str | None = None
+    wall_s: float = 0.0
 
 
 @dataclass(slots=True)
@@ -40,6 +44,8 @@ class TaskRun:
     run_dir: Path
     attempts: list[Attempt]
     diff: str
+    # (candidate, verdict) for every rung the ledger refused before a run was spent.
+    blocked: list[tuple[str, Eligibility]] = field(default_factory=list)
 
     @property
     def verified(self) -> bool:
@@ -114,6 +120,7 @@ def run_task(
     adapters: dict[str, AgentAdapter] | None = None,
     allow_destructive: bool = False,
     verify_runner: Callable[[Path, VerificationPlan, int], VerificationResult] | None = None,
+    use_reserve: bool = False,
 ) -> TaskRun:
     """Run coding agent ladder on task in target, verifying and triaging each attempt."""
     from orc.gitops import ensure_safe_target
@@ -138,23 +145,41 @@ def run_task(
     ledger = Ledger(target / ".orc" / "ledger.json")
     invoke_verifier = verify_runner or run_verification
 
-    # Collect candidate ladder as (lane, candidate) so a lane's timeout override is known.
-    candidate_list: list[tuple[str, str]] = []
-    ladder_order = config.ladder.order
-    for rung in ladder_order:
-        if rung in config.lanes:
-            candidate_list.extend((rung, c) for c in config.lanes[rung].candidates)
+    # (lane, candidate) pairs so a lane's timeout override is known. The fallback lane is
+    # held apart: it is entered only when every ladder rung is quota-blocked, never as a rung.
+    ladder_candidates, fallback_candidates = _candidate_ladder(config)
+    candidate_list = list(ladder_candidates)
     if not candidate_list and "standard" in config.lanes:
-        candidate_list.extend(("standard", c) for c in config.lanes["standard"].candidates)
+        candidate_list = [("standard", c) for c in config.lanes["standard"].candidates]
 
     max_attempts = config.ladder.max_total_attempts
+    n_ladder = len(candidate_list)  # captured before any fallback splice
     attempts: list[Attempt] = []
+    blocked: list[tuple[str, Eligibility]] = []
     feedback = ""
     candidate_idx = 0
     current_effort: str | None = None
     candidate_attempts = 0
+    fallback_entered = False
+    runs_spent = 0  # every ad.run, including one that returns rate_limited — the hard cap
+    ladder_blocked = 0
 
-    while len(attempts) < max_attempts and candidate_idx < len(candidate_list):
+    while runs_spent < max_attempts:
+        if candidate_idx >= len(candidate_list):
+            # `volume` sits beside the ladder, not below it. It is reached only when every
+            # ladder candidate was refused by the ledger before any run was spent (SPEC §6):
+            # not when merely some were, and not after a run (a rate_limited spend included).
+            if (
+                runs_spent == 0
+                and not fallback_entered
+                and fallback_candidates
+                and ladder_blocked == n_ladder
+            ):
+                candidate_list = candidate_list + list(fallback_candidates)
+                fallback_entered = True
+                continue
+            break
+
         lane_name, candidate_str = candidate_list[candidate_idx]
         vendor, model, base_effort = parse_candidate(candidate_str)
         pool_id = resolve_pool_id(vendor, config)
@@ -167,7 +192,17 @@ def run_task(
             candidate_attempts = 0
             continue
 
-        if pool_cfg and ledger.is_exhausted(pool_id, pool_cfg):
+        # No run is spent without an eligibility verdict. A vendor with no resolvable pool
+        # cannot be metered against the reserve, so it is refused rather than run unmetered.
+        verdict = (
+            ledger.eligibility(pool_id, pool_cfg, use_reserve=use_reserve)
+            if pool_cfg is not None
+            else Eligibility(False, "no-pool")
+        )
+        if not verdict.ok:
+            blocked.append((candidate_str, verdict))
+            if not fallback_entered:
+                ladder_blocked += 1
             candidate_idx += 1
             current_effort = None
             candidate_attempts = 0
@@ -186,6 +221,8 @@ def run_task(
             target, config.safety.test_path_patterns, config.safety.skip_dirs
         )
 
+        started = time.monotonic()
+        runs_spent += 1  # counts toward the hard cap and takes the volume fallback off the table
         result = ad.run(
             AgentRequest(
                 prompt=prompt,
@@ -197,8 +234,13 @@ def run_task(
                 transcript_path=run_dir / f"attempt-{attempt_number}-transcript.txt",
             )
         )
+        elapsed = time.monotonic() - started
 
-        if pool_cfg:
+        # Telemetry is authoritative: a run that reported real utilization must not also be
+        # estimated, or the pool is double-counted. Only the estimate path needs record_run.
+        if result.quota is not None:
+            ledger.record_observation(pool_id, result.quota)
+        elif pool_cfg is not None:
             ledger.record_run(pool_id, pool_cfg)
 
         # Before anything else the attempt's output feeds — a test-file edit aborts the
@@ -208,7 +250,7 @@ def run_task(
         )
 
         if result.status == "rate_limited":
-            if pool_cfg:
+            if pool_cfg is not None:
                 ledger.mark_exhausted(pool_id, pool_cfg)
             candidate_idx += 1
             current_effort = None
@@ -217,7 +259,17 @@ def run_task(
 
         verification = invoke_verifier(target, plan, config.verify.timeout_s)
         (run_dir / f"verify-{attempt_number}.txt").write_text(verification.output, encoding="utf-8")
-        attempts.append(Attempt(attempt_number, effort, result, verification, candidate_str))
+        attempts.append(
+            Attempt(
+                attempt_number,
+                effort,
+                result,
+                verification,
+                candidate_str,
+                lane_name,
+                wall_s=elapsed,
+            )
+        )
 
         if result.status == "ok" and verification.ok:
             break
@@ -232,6 +284,7 @@ def run_task(
             verify_attempts=candidate_attempts,
             min_tool_calls=config.triage.min_tool_calls,
         )
+        attempts[-1].triage = triage
         feedback = _feedback(verification, result, target, base)
 
         if triage == "lazy":
@@ -246,9 +299,31 @@ def run_task(
             current_effort = None
             candidate_attempts = 0
 
-    task_run = TaskRun(task_id, branch, run_dir, attempts, git_diff(target, base))
+    task_run = TaskRun(task_id, branch, run_dir, attempts, git_diff(target, base), blocked)
     _log_task_run(target, task, task_run)
     return task_run
+
+
+def _candidate_ladder(
+    config: OrcConfig,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Return (ladder, fallback) as (lane, candidate) pairs.
+
+    The fallback lane is entered only when every ladder candidate is quota-blocked,
+    never as a rung: a cheap first rung would consume the fixed attempt budget and
+    starve `quality` (SPEC §6).
+    """
+    ladder = [
+        (lane, candidate)
+        for lane in config.ladder.order
+        if lane in config.lanes
+        for candidate in config.lanes[lane].candidates
+    ]
+    fallback_lane = config.ladder.fallback
+    fallback: list[tuple[str, str]] = []
+    if fallback_lane is not None and fallback_lane in config.lanes:
+        fallback = [(fallback_lane, c) for c in config.lanes[fallback_lane].candidates]
+    return ladder, fallback
 
 
 def _agent_prompt(task: str, feedback: str) -> str:

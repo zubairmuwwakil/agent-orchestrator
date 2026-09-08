@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ConfigError(ValueError):
@@ -41,8 +41,20 @@ class AgentsConfig(BaseModel):
 
 class LadderConfig(BaseModel):
     order: list[str] = Field(default_factory=lambda: ["standard", "quality"])
+    # Lane entered only when every ladder rung is quota-blocked; never a rung itself.
+    fallback: str | None = None
     effort_order: list[str] = Field(min_length=1)
     max_total_attempts: int = Field(default=4, ge=1)
+
+    @model_validator(mode="after")
+    def _fallback_is_not_a_rung(self) -> LadderConfig:
+        """`volume`-style fallbacks sit beside the ladder; a lane cannot be both (SPEC §6)."""
+        if self.fallback is not None and self.fallback in self.order:
+            raise ValueError(
+                f"ladder.fallback {self.fallback!r} also appears in ladder.order; "
+                "the fallback lane must not also be a rung"
+            )
+        return self
 
     def next_effort(self, current: str) -> str:
         """Return the next configured effort level, saturating at the maximum."""
