@@ -331,17 +331,17 @@ retries; run logging in `.orc/log.jsonl`; `volume` as a quota fallback.
 cleanest quota probe of the three, which exercises `QuotaObservation` against real variety.
 
 **Acceptance:**
-- [ ] A mocked `rate_limited` result reroutes to the other vendor and marks the pool exhausted until reset.
-- [ ] Triage rules covered by unit tests using synthetic `AgentResult`s (lazy → effort bump; dumb → rung change).
-- [ ] `orc quota` shows every pool with utilization, reset time, and whether the number is observed or estimated.
-- [ ] A pool past its reserve line is skipped before a run is spent, and `--use-reserve` overrides it.
-- [ ] With every ladder rung reserve-blocked, the run degrades to the `volume` lane rather than failing.
-- [ ] Structured failure context (exact error summary + touched file diff stat) is provided on verification failure retries.
-- [ ] Exhaustion provides clear copy-pasteable terminal instructions to rescue the task branch interactively.
-- [ ] Task runs are logged as JSONL in `.orc/log.jsonl` per §13, with `prompt_hash` and no prompt text.
-- [ ] Each adapter has parser tests against recorded real CLI output, plus an opt-in `live` test that
+- [x] A mocked `rate_limited` result reroutes to the other vendor and marks the pool exhausted until reset.
+- [x] Triage rules covered by unit tests using synthetic `AgentResult`s (lazy → effort bump; dumb → rung change).
+- [x] `orc quota` shows every pool with utilization, reset time, and whether the number is observed or estimated.
+- [x] A pool past its reserve line is skipped before a run is spent, and `--use-reserve` overrides it.
+- [x] With every ladder rung reserve-blocked, the run degrades to the `volume` lane rather than failing.
+- [x] Structured failure context (exact error summary + touched file diff stat) is provided on verification failure retries.
+- [x] Exhaustion provides clear copy-pasteable terminal instructions to rescue the task branch interactively.
+- [x] Task runs are logged as JSONL in `.orc/log.jsonl` per §13, with `prompt_hash` and no prompt text.
+- [x] Each adapter has parser tests against recorded real CLI output, plus an opt-in `live` test that
       runs its actual argv against the installed CLI.
-- [ ] `orc` runs against a target repository outside its own directory tree.
+- [x] `orc` runs against a target repository outside its own directory tree.
 
 ### M3 — cross-vendor review + consult mode
 **Acceptance:**
