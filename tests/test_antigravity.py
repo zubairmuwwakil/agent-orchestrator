@@ -14,6 +14,51 @@ from orc.adapters.base import AgentRequest
 from orc.config import AdapterConfig
 from tests.conftest import read_fixture, require_cli
 
+_USAGE_ENVELOPE = json.dumps(
+    {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "usage": {"total_tokens": 0},
+        "command": {
+            "name": "usage",
+            "data": {
+                "groups": [
+                    {
+                        "name": "Gemini Models",
+                        "buckets": [
+                            {
+                                "window": "weekly",
+                                "remaining_fraction": 0.6857,
+                                "reset_time": "2026-09-11T03:55:06Z",
+                            },
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 0.8611,
+                                "reset_time": "2026-09-07T22:24:46Z",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "Claude and GPT models",
+                        "buckets": [
+                            {
+                                "window": "weekly",
+                                "remaining_fraction": 0.7492,
+                                "reset_time": "2026-09-14T16:42:06Z",
+                            },
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 0.2475,
+                                "reset_time": "2026-09-07T21:42:06Z",
+                            },
+                        ],
+                    },
+                ]
+            },
+        },
+    }
+)
+
 
 def _config() -> AdapterConfig:
     return AdapterConfig(
@@ -94,6 +139,37 @@ def test_parses_the_recorded_stream(tmp_path: Path) -> None:
         "cache_read_tokens": 8125,
         "total_tokens": 6190,
     }
+
+
+def test_quota_probe_selects_its_group_and_inverts_the_polarity() -> None:
+    """agy reports remaining; QuotaWindow stores used."""
+    adapter = AntigravityAdapter(_config(), quota_group="Gemini Models")
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(["agy"], 0, stdout=_USAGE_ENVELOPE, stderr="")
+    )
+    with (
+        patch("shutil.which", return_value="/usr/local/bin/agy"),
+        patch("subprocess.run", mock_run),
+    ):
+        observation = adapter.quota_probe()
+
+    assert observation is not None
+    assert observation.source == "command"
+    by_kind = {window.kind: window for window in observation.windows}
+    assert by_kind["weekly"].used_fraction == pytest.approx(1 - 0.6857, abs=1e-4)
+    assert by_kind["5h"].used_fraction == pytest.approx(1 - 0.8611, abs=1e-4)
+
+
+def test_quota_probe_returns_none_when_the_group_is_absent() -> None:
+    adapter = AntigravityAdapter(_config(), quota_group="No Such Group")
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(["agy"], 0, stdout=_USAGE_ENVELOPE, stderr="")
+    )
+    with (
+        patch("shutil.which", return_value="/usr/local/bin/agy"),
+        patch("subprocess.run", mock_run),
+    ):
+        assert adapter.quota_probe() is None
 
 
 @pytest.mark.live

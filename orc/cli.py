@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from orc.adapters.antigravity import AntigravityAdapter
 from orc.adapters.base import AgentAdapter
 from orc.adapters.claude_code import ClaudeCodeAdapter
 from orc.adapters.codex import CodexAdapter
@@ -44,6 +45,13 @@ def run(
         adapters["claude"] = ClaudeCodeAdapter(config.adapters["claude"])
     if "codex" in config.adapters:
         adapters["codex"] = CodexAdapter(config.adapters["codex"])
+    if "antigravity" in config.adapters:
+        adapter_config = config.adapters["antigravity"]
+        pool_config = config.pools.get(adapter_config.pool or "")
+        adapters["antigravity"] = AntigravityAdapter(
+            adapter_config,
+            quota_group=pool_config.quota_group if pool_config is not None else None,
+        )
 
     available_adapters = {k: v for k, v in adapters.items() if v.available()}
     if not available_adapters:

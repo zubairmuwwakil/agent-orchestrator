@@ -10,6 +10,12 @@ command = "codex"
 pool = "codex"
 rate_limit_patterns = ["rate limit", "rate_limit", "quota exceeded", "usage limit", "too many requests", "429"]
 
+[adapters.antigravity]
+command = "agy"
+pool = "antigravity_gemini"
+supported_efforts = ["low", "medium", "high"]
+rate_limit_patterns = ["rate limit", "quota exceeded", "usage limit"]
+
 [pools.claude]
 # codex/claude both expose a short and a long window; a pool tracks all of them.
 windows = ["5h", "weekly"]
@@ -23,6 +29,13 @@ budget_units = 30
 flat_run_estimate = 1
 reserve_fraction = 0.15
 
+[pools.antigravity_gemini]
+windows = ["5h", "weekly"]
+budget_units = 100
+flat_run_estimate = 1
+reserve_fraction = 0.15
+quota_group = "Gemini Models"
+
 [lanes.standard]
 # `claude --help` confirms the CLI accepts the `sonnet` alias.
 # `codex` default model is `gpt-5.6-terra`.
@@ -31,12 +44,17 @@ candidates = ["claude:sonnet@high", "codex:gpt-5.6-terra@high"]
 [lanes.quality]
 candidates = ["claude:opus@high", "codex:gpt-5.6-sol@high"]
 
+[lanes.volume]
+# `agy models` lists no bare slug; the adapter composes model + effort.
+candidates = ["antigravity:gemini-3.8-flash@medium", "codex:gpt-5.6-luna@medium"]
+
 [agents]
 # A coding run is not a test run. agy's own default for one headless prompt is 5m.
 timeout_s = 900
 
 [ladder]
 order = ["standard", "quality"]
+fallback = "volume"
 effort_order = ["low", "medium", "high", "xhigh", "max"]
 max_total_attempts = 4
 
@@ -48,4 +66,3 @@ timeout_s = 120
 tests = []
 lint = []
 build = []
-

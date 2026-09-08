@@ -6,8 +6,16 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult, AgentStatus
+from orc.adapters.base import (
+    AgentAdapter,
+    AgentRequest,
+    AgentResult,
+    AgentStatus,
+    QuotaObservation,
+    QuotaWindow,
+)
 from orc.config import AdapterConfig
 
 
@@ -16,12 +24,13 @@ class AntigravityAdapter(AgentAdapter):
 
     name = "antigravity"
 
-    def __init__(self, config: AdapterConfig) -> None:
+    def __init__(self, config: AdapterConfig, quota_group: str | None = None) -> None:
         self._command = config.command
         self._supported_efforts = list(config.supported_efforts)
         self._rate_limit_patterns = tuple(
             pattern.casefold() for pattern in config.rate_limit_patterns
         )
+        self._quota_group = quota_group
 
     def available(self) -> bool:
         """Return whether `agy` is installed and authenticated enough to list models."""
@@ -114,6 +123,64 @@ class AntigravityAdapter(AgentAdapter):
             ran_commands=parsed.ran_commands,
         )
 
+    def quota_probe(self) -> QuotaObservation | None:
+        """Read the free `/usage` utilization command for this vendor-side group."""
+        if self._quota_group is None or shutil.which(self._command) is None:
+            return None
+        try:
+            completed = subprocess.run(
+                [self._command, "--print", "/usage", "--output-format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+            envelope = json.loads(completed.stdout)
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            return None
+        if completed.returncode != 0 or not isinstance(envelope, dict):
+            return None
+
+        command = envelope.get("command")
+        data = command.get("data") if isinstance(command, dict) else None
+        groups = data.get("groups") if isinstance(data, dict) else None
+        if not isinstance(groups, list):
+            return None
+        for group in groups:
+            if not isinstance(group, dict) or group.get("name") != self._quota_group:
+                continue
+            windows: list[QuotaWindow] = []
+            buckets = group.get("buckets")
+            if not isinstance(buckets, list):
+                continue
+            for bucket in buckets:
+                if not isinstance(bucket, dict):
+                    continue
+                kind = bucket.get("window")
+                remaining = bucket.get("remaining_fraction")
+                reset_time = bucket.get("reset_time")
+                if kind not in {"5h", "weekly", "monthly"}:
+                    continue
+                if not isinstance(remaining, int | float) or not isinstance(reset_time, str):
+                    continue
+                try:
+                    resets_at = datetime.fromisoformat(reset_time)
+                except ValueError:
+                    continue
+                if resets_at.tzinfo is None:
+                    continue
+                windows.append(
+                    QuotaWindow(
+                        kind,
+                        1.0 - float(remaining),
+                        resets_at.astimezone(UTC),
+                    )
+                )
+            if windows:
+                return QuotaObservation(windows, datetime.now(UTC), "command")
+        return None
+
 
 @dataclass(slots=True)
 class ParsedStream:
@@ -128,8 +195,8 @@ class ParsedStream:
 def _parse_stream(stdout: str) -> ParsedStream:
     """Parse agy 1.1.27 stream-json events captured in the golden fixture.
 
-    A tool emits multiple `step_update`s for one stable `step_index`; retaining the
-    indices prevents its active and terminal states from double-counting.
+    A tool emits multiple `step_update`s for one stable `step_index`; recording its
+    active state prevents active and terminal updates from double-counting.
     """
     text_parts: list[str] = []
     ran_commands: list[str] = []
