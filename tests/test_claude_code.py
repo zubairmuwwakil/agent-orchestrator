@@ -56,6 +56,24 @@ def test_claude_loads_project_context_and_not_the_users_globals(tmp_path: Path) 
     assert mock_run.call_args.kwargs["stdin"] is subprocess.DEVNULL
 
 
+def test_claude_reports_quota_from_the_event_stream(tmp_path: Path) -> None:
+    adapter = ClaudeCodeAdapter(_config())
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            ["claude"], 0, stdout=read_fixture("claude-stream-json.jsonl"), stderr=""
+        )
+    )
+    with patch("subprocess.run", mock_run):
+        result = adapter.run(_request(tmp_path))
+
+    assert result.quota is not None
+    assert result.quota.source == "stream"
+    weekly = [w for w in result.quota.windows if w.kind == "weekly"]
+    assert len(weekly) == 1
+    assert weekly[0].used_fraction == pytest.approx(0.59)
+    assert weekly[0].resets_at.timestamp() == 1789214400
+
+
 @pytest.mark.live
 def test_claude_argv_is_accepted_by_the_real_cli(tmp_path: Path) -> None:
     require_cli("claude")

@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -119,6 +121,55 @@ def test_codex_argv_is_accepted_by_the_real_cli(tmp_path: Path) -> None:
     assert "cannot be used with" not in output, output[:500]
     assert "unexpected argument" not in output, output[:500]
     assert result.status in {"ok", "rate_limited"}
+
+
+def _write_rollout(codex_home: Path, thread_id: str, used_5h: float, used_week: float) -> Path:
+    session_dir = codex_home / "sessions" / "2026" / "09" / "07"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    path = session_dir / f"rollout-2026-09-07T13-53-18-{thread_id}.jsonl"
+    path.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": thread_id}}) + "\n"
+        + json.dumps(
+            {
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": used_5h,
+                        "window_minutes": 300,
+                        "resets_at": 1788817290,
+                    },
+                    "secondary": {
+                        "used_percent": used_week,
+                        "window_minutes": 10080,
+                        "resets_at": 1789356153,
+                    },
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_codex_probes_quota_from_the_newest_rollout(tmp_path: Path) -> None:
+    _write_rollout(tmp_path, "01a07d00-c866-79c3-9645-877ccb9aae60", 39.0, 38.0)
+    adapter = CodexAdapter(_codex_config())
+
+    with patch.dict(os.environ, {"CODEX_HOME": str(tmp_path)}):
+        observation = adapter.quota_probe()
+
+    assert observation is not None
+    assert observation.source == "session-file"
+    by_kind = {w.kind: w for w in observation.windows}
+    assert by_kind["5h"].used_fraction == pytest.approx(0.39)
+    assert by_kind["weekly"].used_fraction == pytest.approx(0.38)
+    assert by_kind["weekly"].resets_at.tzinfo is UTC
+
+
+def test_codex_quota_probe_is_none_when_no_rollout_exists(tmp_path: Path) -> None:
+    adapter = CodexAdapter(_codex_config())
+    with patch.dict(os.environ, {"CODEX_HOME": str(tmp_path)}):
+        assert adapter.quota_probe() is None
 
 
 def test_codex_run_detects_rate_limit(tmp_path: Path) -> None:

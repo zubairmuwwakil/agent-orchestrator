@@ -7,9 +7,18 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult, AgentStatus
+from orc.adapters.base import (
+    AgentAdapter,
+    AgentRequest,
+    AgentResult,
+    AgentStatus,
+    QuotaObservation,
+    QuotaWindow,
+    window_kind_from_minutes,
+)
 from orc.config import AdapterConfig
 
 
@@ -42,8 +51,7 @@ class CodexAdapter(AgentAdapter):
             pass
 
         # Offline fallback: check ~/.codex/auth.json
-        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-        auth_file = codex_home / "auth.json"
+        auth_file = _codex_home() / "auth.json"
         if auth_file.is_file():
             try:
                 auth = json.loads(auth_file.read_text(encoding="utf-8"))
@@ -100,6 +108,11 @@ class CodexAdapter(AgentAdapter):
             status = "rate_limited"
 
         parsed = _parse_events(completed.stdout)
+        # Prefer this run's own thread; codex writes the reading into that rollout file.
+        quota: QuotaObservation | None = None
+        rollout = _newest_rollout(_codex_home() / "sessions", parsed.thread_id)
+        if rollout is not None:
+            quota = _observation_from_rollout(rollout)
         return AgentResult(
             status=status,
             text=parsed.text or raw_transcript,
@@ -107,7 +120,13 @@ class CodexAdapter(AgentAdapter):
             transcript_path=transcript_path,
             tool_call_count=parsed.tool_call_count,
             ran_commands=parsed.ran_commands,
+            quota=quota,
         )
+
+    def quota_probe(self) -> QuotaObservation | None:
+        """Read utilization from the newest session rollout without spending a run."""
+        rollout = _newest_rollout(_codex_home() / "sessions")
+        return _observation_from_rollout(rollout) if rollout else None
 
 
 _TOOL_ITEM_TYPES = frozenset(
@@ -178,6 +197,85 @@ def _parse_events(stdout: str) -> ParsedRun:
         usage=usage,
         thread_id=thread_id,
     )
+
+
+def _codex_home() -> Path:
+    """Resolve $CODEX_HOME, matching the codex CLI's own default of ~/.codex."""
+    return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+
+
+def _newest_rollout(sessions_root: Path, thread_id: str | None = None) -> Path | None:
+    """Find the most recently written session rollout, optionally for one thread."""
+    if not sessions_root.is_dir():
+        return None
+    pattern = f"**/rollout-*{thread_id}.jsonl" if thread_id else "**/rollout-*.jsonl"
+    candidates = [path for path in sessions_root.glob(pattern) if path.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _find_rate_limits(node: object) -> dict[str, object] | None:
+    """rate_limits is nested inside a per-turn record whose shape varies by version."""
+    if isinstance(node, dict):
+        found = node.get("rate_limits")
+        if isinstance(found, dict):
+            return found
+        for value in node.values():
+            nested = _find_rate_limits(value)
+            if nested is not None:
+                return nested
+    elif isinstance(node, list):
+        for value in node:
+            nested = _find_rate_limits(value)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _observation_from_rollout(path: Path) -> QuotaObservation | None:
+    """Read the last rate_limits record. Codex writes one per turn; the last is current.
+
+    Codex reports `used_percent` (0-100), inverted here into fraction used (0-1)."""
+    latest: dict[str, object] | None = None
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if '"rate_limits"' not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            found = _find_rate_limits(record)
+            if found is not None:
+                latest = found
+    except OSError:
+        return None
+    if latest is None:
+        return None
+
+    windows: list[QuotaWindow] = []
+    for key in ("primary", "secondary"):
+        bucket = latest.get(key)
+        if not isinstance(bucket, dict):
+            continue
+        used = bucket.get("used_percent")
+        minutes = bucket.get("window_minutes")
+        resets = bucket.get("resets_at")
+        if not isinstance(used, int | float) or not isinstance(minutes, int | float):
+            continue
+        if not isinstance(resets, int | float):
+            continue
+        windows.append(
+            QuotaWindow(
+                window_kind_from_minutes(float(minutes)),
+                float(used) / 100.0,
+                datetime.fromtimestamp(float(resets), UTC),
+            )
+        )
+    if not windows:
+        return None
+    return QuotaObservation(windows, datetime.now(UTC), "session-file")
 
 
 def _as_text(value: str | bytes | None) -> str:

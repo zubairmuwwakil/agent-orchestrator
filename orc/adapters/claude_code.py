@@ -6,8 +6,17 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from orc.adapters.base import AgentAdapter, AgentRequest, AgentResult, AgentStatus
+from orc.adapters.base import (
+    AgentAdapter,
+    AgentRequest,
+    AgentResult,
+    AgentStatus,
+    QuotaObservation,
+    QuotaWindow,
+    WindowKind,
+)
 from orc.config import AdapterConfig
 
 
@@ -89,6 +98,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         parsed = _parse_stream(completed.stdout)
         if parsed.is_error:
             status = "fail"
+        quota = (
+            _observation_from_rate_limit(parsed.rate_limit_info)
+            if parsed.rate_limit_info
+            else None
+        )
         return AgentResult(
             status=status,
             text=parsed.text or raw_transcript,
@@ -96,6 +110,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             transcript_path=transcript_path,
             tool_call_count=parsed.tool_call_count,
             ran_commands=parsed.ran_commands,
+            quota=quota,
         )
 
 
@@ -177,6 +192,36 @@ def _parse_stream(stdout: str) -> ParsedStream:
         usage=usage,
         is_error=is_error,
         rate_limit_info=rate_limit_info,
+    )
+
+
+# Claude names its windows; codex reports minutes. An unrecognized name is skipped
+# rather than guessed — a mislabeled window would block the wrong lane.
+_CLAUDE_WINDOW_KINDS: dict[str, WindowKind] = {
+    "five_hour": "5h",
+    "seven_day": "weekly",
+    "monthly": "monthly",
+}
+
+
+def _observation_from_rate_limit(info: dict[str, object]) -> QuotaObservation | None:
+    """Normalize one `rate_limit_event` into the vendor-neutral shape. Claude reports
+    `utilization` (already fraction used), so no polarity inversion is needed here."""
+    kind = _CLAUDE_WINDOW_KINDS.get(str(info.get("rateLimitType", "")))
+    utilization = info.get("utilization")
+    resets_at = info.get("resetsAt")
+    if (
+        kind is None
+        or not isinstance(utilization, int | float)
+        or not isinstance(resets_at, int | float)
+    ):
+        return None
+    return QuotaObservation(
+        windows=[
+            QuotaWindow(kind, float(utilization), datetime.fromtimestamp(float(resets_at), UTC))
+        ],
+        observed_at=datetime.now(UTC),
+        source="stream",
     )
 
 
