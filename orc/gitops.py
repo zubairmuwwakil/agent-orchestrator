@@ -15,9 +15,60 @@ class SafetyError(RuntimeError):
 
 _DESTRUCTIVE_PATTERNS = (r"\brm\s+-rf\b", r"\bdrop\s+table\b", r"\bschema\s+migration\b")
 
+_EXCLUDE_ENTRY = ".orc/"
+_EXCLUDE_HEADER = "# added by orc: run artifacts, never committed"
+
 
 def _git(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", *args], cwd=target, capture_output=True, text=True, check=False)
+
+
+def git_dir(target: Path) -> Path:
+    """Resolve the repository's git directory, correct for worktrees and submodules."""
+    resolved = _git(target, "rev-parse", "--absolute-git-dir")
+    if resolved.returncode != 0:
+        raise SafetyError(f"target is not a git repository: {target}")
+    return Path(resolved.stdout.strip())
+
+
+def _exclude_path(target: Path) -> Path:
+    """Resolve `info/exclude`, which git reads from the *common* git dir.
+
+    `git_dir` (`--absolute-git-dir`) points at the per-worktree dir in a linked
+    worktree, but `info/exclude` is only honored from the common dir; `--git-path`
+    resolves to the right place in both layouts.
+    """
+    resolved = _git(target, "rev-parse", "--git-path", "info/exclude")
+    if resolved.returncode != 0:
+        raise SafetyError(f"target is not a git repository: {target}")
+    path = Path(resolved.stdout.strip())
+    return path if path.is_absolute() else (target / path)
+
+
+def ensure_orc_excluded(target: Path) -> None:
+    """Exclude `.orc/` locally so it neither dirties the tree nor can be staged.
+
+    `.git/info/exclude` is the only permitted write inside `.git` (SPEC §10). It is
+    local-only and never committed, so the user's repository is untouched.
+    """
+    exclude_path = _exclude_path(target)
+    info_dir = exclude_path.parent
+    if info_dir.is_symlink() or exclude_path.is_symlink():
+        raise SafetyError(
+            "refusing to write .git/info/exclude: it or its parent directory is a symlink"
+        )
+    if exclude_path.is_file() and exclude_path.stat().st_nlink > 1:
+        raise SafetyError(
+            "refusing to write .git/info/exclude: it has more than one hard link"
+        )
+    info_dir.mkdir(parents=True, exist_ok=True)
+    existing = exclude_path.read_text(encoding="utf-8") if exclude_path.is_file() else ""
+    if any(line.strip() == _EXCLUDE_ENTRY for line in existing.splitlines()):
+        return
+    separator = "" if existing.endswith("\n") or not existing else "\n"
+    exclude_path.write_text(
+        f"{existing}{separator}{_EXCLUDE_HEADER}\n{_EXCLUDE_ENTRY}\n", encoding="utf-8"
+    )
 
 
 def ensure_safe_target(target: Path, task: str, allow_destructive: bool) -> None:
@@ -31,10 +82,20 @@ def ensure_safe_target(target: Path, task: str, allow_destructive: bool) -> None
     inside = _git(target, "rev-parse", "--is-inside-work-tree")
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         raise SafetyError(f"target is not a git repository: {target}")
+    ensure_orc_excluded(target)
     status = _git(target, "status", "--porcelain")
     if status.returncode != 0:
         raise SafetyError("could not inspect target git status")
-    if status.stdout.strip():
+    # Only untracked `.orc/` artifacts are ignored. A tracked, staged, deleted, or
+    # renamed `.orc/` path stays in `dirty`: git's exclude never suppresses those, and
+    # a rename like `R  .orc/x -> realfile` would otherwise conceal a change outside `.orc/`.
+    dirty = [
+        line
+        for line in status.stdout.splitlines()
+        if line.strip()
+        and not (line.startswith("?? ") and line[3:].lstrip('"').startswith(".orc/"))
+    ]
+    if dirty:
         raise SafetyError("target git repository is not clean; commit or stash changes first")
 
 
